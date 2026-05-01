@@ -12,6 +12,8 @@ import { SemestersModule } from './modules/semesters/semesters.module';
 import { AssignmentsModule } from './modules/assignments/assignments.module';
 import { ClassSlotsModule } from './modules/class-slots/class-slots.module';
 import { RoutineModule } from './modules/routine/routine.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { RoutineModule } from './modules/routine/routine.module';
     AssignmentsModule,
     ClassSlotsModule,
     RoutineModule,
+    AuthModule,
+    UsersModule,
   ],
   controllers: [],
   providers: [],
