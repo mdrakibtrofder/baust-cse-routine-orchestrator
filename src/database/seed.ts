@@ -43,15 +43,23 @@ async function seed() {
       console.log('✅ Admin user created (admin / admin123)');
     }
 
+    // Create cse_head user
+    const headExists = await userRepo.findOne({ where: { username: 'cse_head' } });
+    if (!headExists) {
+      const hashedPassword = await bcrypt.hash('Head@CSE', 10);
+      await userRepo.save(userRepo.create({ username: 'cse_head', password: hashedPassword }));
+      console.log('✅ CSE Head user created (cse_head / Head@CSE)');
+    }
+
     // Clear existing data (optional, but good for clean seed)
-    // await dataSource.dropDatabase();
-    // await dataSource.synchronize();
+    await dataSource.dropDatabase();
+    await dataSource.synchronize();
 
     // Create semesters
     const semesters: Semester[] = [];
     for (let y = 2026; y <= 2028; y++) {
-      semesters.push(await semesterRepo.save(semesterRepo.create({ id: `sem-winter-${y}`, name: `Winter ${y}`, year: y, season: 'Winter' })));
-      semesters.push(await semesterRepo.save(semesterRepo.create({ id: `sem-summer-${y}`, name: `Summer ${y}`, year: y, season: 'Summer' })));
+      semesters.push(await semesterRepo.save(semesterRepo.create({ name: `Winter ${y}`, year: y, season: 'Winter' })));
+      semesters.push(await semesterRepo.save(semesterRepo.create({ name: `Summer ${y}`, year: y, season: 'Summer' })));
     }
     const activeSemester = semesters[0];
     console.log(`✅ ${semesters.length} semesters created`);
@@ -69,10 +77,18 @@ async function seed() {
     console.log(`✅ ${sections.length} sections migrated`);
 
     // Migrate courses
-    const courses = await courseRepo.save(seedData.courses.map(c => ({
-        ...c,
-        course_type: classifyType(c.theory, c.sessional, c.credit)
-    })));
+    const uniqueCoursesMap = new Map();
+    seedData.courses.forEach(c => {
+      // Use code, level, AND term as the key to handle cases where same code might appear in different terms/levels
+      const key = `${c.code}|${c.level}|${c.term}`;
+      if (!uniqueCoursesMap.has(key)) {
+        uniqueCoursesMap.set(key, {
+          ...c,
+          course_type: classifyType(c.theory, c.sessional, c.credit)
+        });
+      }
+    });
+    const courses = await courseRepo.save(Array.from(uniqueCoursesMap.values()));
     console.log(`✅ ${courses.length} courses migrated`);
 
     // Migrate periods
@@ -90,28 +106,46 @@ async function seed() {
     const sectionMap = new Map(sections.map(s => [`${s.level}|${s.term}|${s.name}`, s.id]));
 
     // Migrate assignments and slots
+    const uniqueAssignmentsMap = new Map();
     for (const a of seedData.assignments) {
       const cid = courseMap.get(`${a.course_code}|${a.level}|${a.term}`);
       const sid = sectionMap.get(`${a.level}|${a.term}|${a.section_name}`);
       if (!cid || !sid) continue;
 
-      const teacher_ids = a.teachers
-        .map(sn => teacherMap.get(sn))
-        .filter(id => !!id);
+      const key = `${activeSemester.id}|${cid}|${sid}`;
+      if (!uniqueAssignmentsMap.has(key)) {
+        const teacher_ids = a.teachers
+          .map(sn => teacherMap.get(sn))
+          .filter(id => !!id);
 
+        uniqueAssignmentsMap.set(key, {
+          semester_id: activeSemester.id,
+          course_id: cid,
+          section_id: sid,
+          teacher_ids,
+          classes: a.classes
+        });
+      } else {
+        // Merge classes if duplicate assignment entries exist in seed.json
+        const existing = uniqueAssignmentsMap.get(key);
+        existing.classes = [...existing.classes, ...a.classes];
+      }
+    }
+
+    for (const [key, a] of uniqueAssignmentsMap) {
       const cst = await cstRepo.save({
-        semester_id: activeSemester.id,
-        course_id: cid,
-        section_id: sid,
-        teacher_ids
+        semester_id: a.semester_id,
+        course_id: a.course_id,
+        section_id: a.section_id,
+        teacher_ids: a.teacher_ids
       } as any);
 
       for (const cls of a.classes) {
         const room_id = cls.room ? roomMap.get(cls.room) : null;
         await classSlotRepo.save({
-          semester_id: activeSemester.id,
-          course_id: cid,
-          section_id: sid,
+          semester_id: a.semester_id,
+          course_id: a.course_id,
+          section_id: a.section_id,
           day: cls.day,
           start: cls.start,
           end: cls.end,
@@ -120,7 +154,7 @@ async function seed() {
         } as any);
       }
     }
-    console.log('✅ Assignments and class slots migrated');
+    console.log(`✅ ${uniqueAssignmentsMap.size} assignments and their class slots migrated`);
 
     console.log('🚀 Seeding completed successfully!');
   } catch (error) {

@@ -61,14 +61,14 @@ export class InitialSchema1714400000000 implements MigrationInterface {
         await queryRunner.query(`
             CREATE TABLE "courses" (
                 "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-                "code" varchar(50) NOT NULL UNIQUE,
+                "code" varchar(50) NOT NULL,
                 "name" varchar(200) NOT NULL,
                 "credit" numeric(3,2) NOT NULL CHECK (credit > 0),
                 "course_type" varchar(20) NOT NULL CHECK (course_type IN ('theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75')),
                 "level" integer NOT NULL CHECK (level > 0),
                 "term" varchar(10) NOT NULL CHECK (term IN ('I', 'II')),
-                "theory" integer NOT NULL DEFAULT 0,
-                "sessional" integer NOT NULL DEFAULT 0,
+                "theory" numeric(3,2) NOT NULL DEFAULT 0,
+                "sessional" numeric(3,2) NOT NULL DEFAULT 0,
                 "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(code, level, term)

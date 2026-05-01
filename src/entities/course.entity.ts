@@ -3,7 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
 
 @Entity('courses')
-@Index(['code'], { unique: true })
+@Index(['code', 'level', 'term'], { unique: true })
 @Index(['level', 'term'])
 export class Course {
   @PrimaryGeneratedColumn('uuid')
@@ -31,10 +31,10 @@ export class Course {
   @Column({ type: 'varchar', length: 10, enum: ['I', 'II'] })
   term: 'I' | 'II';
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({ type: 'numeric', precision: 3, scale: 2, default: 0 })
   theory: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({ type: 'numeric', precision: 3, scale: 2, default: 0 })
   sessional: number;
 
   @CreateDateColumn()
