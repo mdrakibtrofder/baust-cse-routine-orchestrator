@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Teacher } from '../../entities/teacher.entity';
 import { CreateTeacherDto } from '../../dtos/teacher.dto';
 import { UpdateTeacherDto } from '../../dtos/update-teacher.dto';
@@ -62,7 +62,7 @@ export class TeachersService {
 
     const teacher = this.teacherRepository.create({
       ...dto,
-      assigned_credit: dto.assigned_credit || 0,
+      assigned_credit_hours: dto.assigned_credit_hours || 0,
       status: dto.status || '',
     });
 
@@ -110,7 +110,7 @@ export class TeachersService {
     const entities = teachers.map(dto =>
       this.teacherRepository.create({
         ...dto,
-        assigned_credit: dto.assigned_credit || 0,
+        assigned_credit_hours: dto.assigned_credit_hours || 0,
         status: dto.status || '',
       })
     );
@@ -122,7 +122,7 @@ export class TeachersService {
     const teacher = await this.findById(teacherId);
     return {
       teacher,
-      totalCredit: Number(teacher.assigned_credit),
+      totalCredit: Number(teacher.assigned_credit_hours),
     };
   }
 }

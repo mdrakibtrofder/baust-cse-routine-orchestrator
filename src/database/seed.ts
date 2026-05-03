@@ -98,7 +98,12 @@ async function seed() {
     console.log('✅ Initial semesters created');
 
     // Migrate teachers
-    const teachers = await teacherRepo.save(seedData.teachers.map(t => ({ ...t, assigned_credit: Number(t.assigned_credit) })));
+    const teachers = await teacherRepo.save(
+      seedData.teachers.map(t => ({
+        ...t,
+        assigned_credit_hours: Number(t.assigned_credit_hours ?? t.assigned_credit ?? 0),
+      })),
+    );
     console.log(`✅ ${teachers.length} teachers migrated`);
 
     // Migrate rooms
@@ -204,4 +209,5 @@ function classifyType(theory: number, sessional: number, credit: number): string
   return "theory_2.0";
 }
 
-seed();
+// Intentionally disabled to protect existing data from bulk reset/reseed.
+// seed();

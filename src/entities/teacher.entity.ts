@@ -22,7 +22,7 @@ export class Teacher {
   status: string;
 
   @Column({ type: 'numeric', precision: 5, scale: 2, default: 0 })
-  assigned_credit: number;
+  assigned_credit_hours: number;
 
   @CreateDateColumn()
   created_at: Date;

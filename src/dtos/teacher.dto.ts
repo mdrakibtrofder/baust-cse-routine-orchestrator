@@ -22,5 +22,5 @@ export class CreateTeacherDto {
   @IsNumber()
   @Min(0)
   @Max(100)
-  assigned_credit?: number;
+  assigned_credit_hours?: number;
 }
