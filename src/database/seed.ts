@@ -9,6 +9,8 @@ import { Course } from '../entities/course.entity';
 import { Period } from '../entities/period.entity';
 import { Day } from '../entities/day.entity';
 import { Semester } from '../entities/semester.entity';
+import { Year } from '../entities/year.entity';
+import { SemesterType } from '../entities/semester-type.entity';
 import { ClassSlot } from '../entities/class-slot.entity';
 import { CourseSectionTeacher } from '../entities/course-section-teacher.entity';
 import { User } from '../entities/user.entity';
@@ -31,38 +33,69 @@ async function seed() {
     const periodRepo = dataSource.getRepository(Period);
     const dayRepo = dataSource.getRepository(Day);
     const semesterRepo = dataSource.getRepository(Semester);
+    const yearRepo = dataSource.getRepository(Year);
+    const typeRepo = dataSource.getRepository(SemesterType);
     const classSlotRepo = dataSource.getRepository(ClassSlot);
     const cstRepo = dataSource.getRepository(CourseSectionTeacher);
     const userRepo = dataSource.getRepository(User);
 
-    // Create a default admin user
-    const adminExists = await userRepo.findOne({ where: { username: 'admin' } });
-    if (!adminExists) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await userRepo.save(userRepo.create({ username: 'admin', password: hashedPassword }));
-      console.log('✅ Admin user created (admin / admin123)');
+    // Clear existing data (for clean seed)
+    try {
+      await dataSource.query('DROP TABLE IF EXISTS "class_slots" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "course_section_teachers" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "semesters" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "years" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "semester_types" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "courses" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "sections" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "rooms" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "teachers" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "periods" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "days" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "users" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "teacher_unavailability" CASCADE');
+      await dataSource.query('DROP TABLE IF EXISTS "room_unavailability" CASCADE');
+    } catch (e) {
+      console.log('Note: Some tables might not exist yet, continuing...');
     }
+    
+    // Disable synchronization temporarily to manually create the new schema if needed
+    // or just let it run if it's clean
+    await dataSource.synchronize(true); // Force sync after dropping everything
 
-    // Create cse_head user
-    const headExists = await userRepo.findOne({ where: { username: 'cse_head' } });
-    if (!headExists) {
-      const hashedPassword = await bcrypt.hash('Head@CSE', 10);
-      await userRepo.save(userRepo.create({ username: 'cse_head', password: hashedPassword }));
-      console.log('✅ CSE Head user created (cse_head / Head@CSE)');
+    // Create a default admin users
+    const hashedPassword1 = await bcrypt.hash('admin123', 10);
+    await userRepo.save(userRepo.create({ username: 'admin', password: hashedPassword1 }));
+    const hashedPassword2 = await bcrypt.hash('Head@CSE', 10);
+    await userRepo.save(userRepo.create({ username: 'cse_head', password: hashedPassword2 }));
+    console.log('✅ Admin users created');
+
+    // Populate Years (2026-2056)
+    const years: Year[] = [];
+    for (let y = 2026; y <= 2056; y++) {
+      years.push(await yearRepo.save(yearRepo.create({ value: y })));
     }
+    console.log(`✅ ${years.length} years created (2026-2056)`);
 
-    // Clear existing data (optional, but good for clean seed)
-    await dataSource.dropDatabase();
-    await dataSource.synchronize();
+    // Populate Semester Types
+    const winterType = await typeRepo.save(typeRepo.create({ name: 'Winter' }));
+    const summerType = await typeRepo.save(typeRepo.create({ name: 'Summer' }));
+    console.log('✅ Semester types created (Winter, Summer)');
 
-    // Create semesters
-    const semesters: Semester[] = [];
-    for (let y = 2026; y <= 2028; y++) {
-      semesters.push(await semesterRepo.save(semesterRepo.create({ name: `Winter ${y}`, year: y, season: 'Winter' })));
-      semesters.push(await semesterRepo.save(semesterRepo.create({ name: `Summer ${y}`, year: y, season: 'Summer' })));
-    }
-    const activeSemester = semesters[0];
-    console.log(`✅ ${semesters.length} semesters created`);
+    // Create Initial Semesters
+    const activeSemester = await semesterRepo.save(semesterRepo.create({
+      name: 'Winter 2026',
+      year_id: years[0].id,
+      type_id: winterType.id,
+      is_active: true
+    }));
+    await semesterRepo.save(semesterRepo.create({
+      name: 'Summer 2026',
+      year_id: years[0].id,
+      type_id: summerType.id,
+      is_active: false
+    }));
+    console.log('✅ Initial semesters created');
 
     // Migrate teachers
     const teachers = await teacherRepo.save(seedData.teachers.map(t => ({ ...t, assigned_credit: Number(t.assigned_credit) })));
@@ -79,7 +112,6 @@ async function seed() {
     // Migrate courses
     const uniqueCoursesMap = new Map();
     seedData.courses.forEach(c => {
-      // Use code, level, AND term as the key to handle cases where same code might appear in different terms/levels
       const key = `${c.code}|${c.level}|${c.term}`;
       if (!uniqueCoursesMap.has(key)) {
         uniqueCoursesMap.set(key, {
@@ -126,14 +158,13 @@ async function seed() {
           classes: a.classes
         });
       } else {
-        // Merge classes if duplicate assignment entries exist in seed.json
         const existing = uniqueAssignmentsMap.get(key);
         existing.classes = [...existing.classes, ...a.classes];
       }
     }
 
     for (const [key, a] of uniqueAssignmentsMap) {
-      const cst = await cstRepo.save({
+      await cstRepo.save({
         semester_id: a.semester_id,
         course_id: a.course_id,
         section_id: a.section_id,

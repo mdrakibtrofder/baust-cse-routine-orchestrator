@@ -1,7 +1,6 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body } from '@nestjs/common';
 import { SemestersService } from './semesters.service';
-import { CreateSemesterDto } from '../../dtos/semester.dto';
-import { UpdateSemesterDto } from '../../dtos/update-dtos/update-semester.dto';
+import { CreateSemesterDto } from '../../dtos/semester/create-semester.dto';
 
 @Controller('semesters')
 export class SemestersController {
@@ -28,7 +27,7 @@ export class SemestersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateSemesterDto) {
+  update(@Param('id') id: string, @Body() dto: Partial<CreateSemesterDto>) {
     return this.semestersService.update(id, dto);
   }
 

@@ -9,6 +9,8 @@ import { CoursesModule } from './modules/courses/courses.module';
 import { PeriodsModule } from './modules/periods/periods.module';
 import { DaysModule } from './modules/days/days.module';
 import { SemestersModule } from './modules/semesters/semesters.module';
+import { YearsModule } from './modules/years/years.module';
+import { SemesterTypesModule } from './modules/semester-types/semester-types.module';
 import { AssignmentsModule } from './modules/assignments/assignments.module';
 import { ClassSlotsModule } from './modules/class-slots/class-slots.module';
 import { RoutineModule } from './modules/routine/routine.module';
@@ -29,6 +31,8 @@ import { UsersModule } from './modules/users/users.module';
     PeriodsModule,
     DaysModule,
     SemestersModule,
+    YearsModule,
+    SemesterTypesModule,
     AssignmentsModule,
     ClassSlotsModule,
     RoutineModule,

@@ -1,20 +1,26 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { ClassSlot } from './class-slot.entity';
 import { CourseSectionTeacher } from './course-section-teacher.entity';
+import { Year } from './year.entity';
+import { SemesterType } from './semester-type.entity';
 
 @Entity('semesters')
+@Index(['year_id', 'type_id'], { unique: true })
 export class Semester {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 100 })
+  @Column({ type: 'varchar', length: 200 })
   name: string;
 
-  @Column({ type: 'integer' })
-  year: number;
+  @Column({ type: 'uuid' })
+  year_id: string;
 
-  @Column({ type: 'varchar', length: 20, enum: ['Winter', 'Summer'] })
-  season: 'Winter' | 'Summer';
+  @Column({ type: 'uuid' })
+  type_id: string;
+
+  @Column({ type: 'boolean', default: false })
+  is_active: boolean;
 
   @CreateDateColumn()
   created_at: Date;
@@ -22,9 +28,17 @@ export class Semester {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @OneToMany(() => ClassSlot, slot => slot.semester)
+  @ManyToOne(() => Year, (year) => year.semesters)
+  @JoinColumn({ name: 'year_id' })
+  year_ref: Year;
+
+  @ManyToOne(() => SemesterType, (st) => st.semesters)
+  @JoinColumn({ name: 'type_id' })
+  type_ref: SemesterType;
+
+  @OneToMany(() => ClassSlot, (slot) => slot.semester)
   classSlots: ClassSlot[];
 
-  @OneToMany(() => CourseSectionTeacher, cst => cst.semester)
+  @OneToMany(() => CourseSectionTeacher, (cst) => cst.semester)
   courseSectionTeachers: CourseSectionTeacher[];
 }
