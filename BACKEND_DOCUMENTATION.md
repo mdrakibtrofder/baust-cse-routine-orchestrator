@@ -623,6 +623,10 @@ export class CourseSectionTeacher {
 
 ## API Endpoints
 
+For a detailed, up-to-date list of all endpoints, please refer to the [API Reference](API_REFERENCE.md).
+
+The system also provides interactive Swagger documentation available at `/api/docs`.
+
 ### 1. Semesters
 
 ```
