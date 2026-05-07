@@ -16,6 +16,8 @@ import { ClassSlotsModule } from './modules/class-slots/class-slots.module';
 import { RoutineModule } from './modules/routine/routine.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { TeacherUnavailabilityModule } from './modules/teacher-unavailability/teacher-unavailability.module';
+import { RoomUnavailabilityModule } from './modules/room-unavailability/room-unavailability.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { UsersModule } from './modules/users/users.module';
     RoutineModule,
     AuthModule,
     UsersModule,
+    TeacherUnavailabilityModule,
+    RoomUnavailabilityModule,
   ],
   controllers: [],
   providers: [],

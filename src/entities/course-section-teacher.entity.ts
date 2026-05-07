@@ -2,6 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { Semester } from './semester.entity';
 import { Course } from './course.entity';
 import { Section } from './section.entity';
+import { Room } from './room.entity';
 
 @Entity('course_section_teachers')
 @Index(['semester_id', 'course_id', 'section_id'], { unique: true })
@@ -21,6 +22,9 @@ export class CourseSectionTeacher {
   @Column({ type: 'uuid', array: true, default: () => 'array[]::uuid[]' })
   teacher_ids: string[];
 
+  @Column({ type: 'uuid', nullable: true })
+  primary_room_id: string | null;
+
   @CreateDateColumn()
   created_at: Date;
 
@@ -38,4 +42,8 @@ export class CourseSectionTeacher {
   @ManyToOne(() => Section)
   @JoinColumn({ name: 'section_id' })
   section: Section;
+
+  @ManyToOne(() => Room, { nullable: true })
+  @JoinColumn({ name: 'primary_room_id' })
+  primary_room: Room | null;
 }

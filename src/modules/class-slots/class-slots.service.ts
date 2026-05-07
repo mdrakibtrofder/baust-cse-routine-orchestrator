@@ -6,6 +6,8 @@ import { Course } from '../../entities/course.entity';
 import { Section } from '../../entities/section.entity';
 import { Room } from '../../entities/room.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
+import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
+import { RoomUnavailability } from '../../entities/room-unavailability.entity';
 import { CreateClassSlotDto } from '../../dtos/class-slot.dto';
 import { UpdateClassSlotDto } from '../../dtos/update-dtos/update-class-slot.dto';
 import { CheckConflictsDto } from '../../dtos/check-conflicts.dto';
@@ -24,6 +26,10 @@ export class ClassSlotsService {
     private readonly roomRepository: Repository<Room>,
     @InjectRepository(CourseSectionTeacher)
     private readonly cstRepository: Repository<CourseSectionTeacher>,
+    @InjectRepository(TeacherUnavailability)
+    private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
+    @InjectRepository(RoomUnavailability)
+    private readonly roomUnavailabilityRepository: Repository<RoomUnavailability>,
   ) {}
 
   async findBySemester(semesterId: string): Promise<ClassSlot[]> {
@@ -153,12 +159,18 @@ export class ClassSlotsService {
 
         const roomConflicts = await this.checkRoomConflicts(dto);
         conflicts.push(...roomConflicts);
+
+        const roomUnavailability = await this.checkRoomUnavailability(dto);
+        conflicts.push(...roomUnavailability);
       }
     }
 
     if (dto.teacher_ids && dto.teacher_ids.length > 0) {
       const teacherConflicts = await this.checkTeacherConflicts(dto);
       conflicts.push(...teacherConflicts);
+
+      const teacherUnavailability = await this.checkTeacherUnavailability(dto);
+      conflicts.push(...teacherUnavailability);
     }
 
     const sectionConflicts = await this.checkSectionConflicts(dto);
@@ -230,6 +242,45 @@ export class ClassSlotsService {
       });
     }
 
+    return conflicts;
+  }
+
+  private async checkTeacherUnavailability(dto: CheckConflictsDto): Promise<Conflict[]> {
+    const conflicts: Conflict[] = [];
+    const unavailabilities = await this.teacherUnavailabilityRepository.find({
+      where: { day: dto.day },
+    });
+
+    for (const tid of dto.teacher_ids) {
+      const teacherUnavail = unavailabilities.filter(u => u.teacher_id === tid);
+      for (const u of teacherUnavail) {
+        if (this.timesOverlap(u.start, u.end, dto.start, dto.end)) {
+          conflicts.push({
+            type: 'teacher_unavailable',
+            message: `Teacher is unavailable on ${dto.day} ${u.start}-${u.end}${u.reason ? ` (${u.reason})` : ''}`,
+          });
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  private async checkRoomUnavailability(dto: CheckConflictsDto): Promise<Conflict[]> {
+    const conflicts: Conflict[] = [];
+    const unavailabilities = await this.roomUnavailabilityRepository.find({
+      where: { room_id: dto.room_id },
+    });
+
+    for (const u of unavailabilities) {
+      if (u.days.includes(dto.day)) {
+        if (this.timesOverlap(u.start, u.end, dto.start, dto.end)) {
+          conflicts.push({
+            type: 'room_unavailable',
+            message: `Room is unavailable on ${dto.day} ${u.start}-${u.end}${u.reason ? ` (${u.reason})` : ''}`,
+          });
+        }
+      }
+    }
     return conflicts;
   }
 

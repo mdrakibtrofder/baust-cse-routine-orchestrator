@@ -1,4 +1,4 @@
-import { IsUUID, IsArray } from 'class-validator';
+import { IsUUID, IsArray, IsOptional } from 'class-validator';
 
 export class CreateAssignmentDto {
   @IsUUID()
@@ -13,4 +13,8 @@ export class CreateAssignmentDto {
   @IsArray()
   @IsUUID('all', { each: true })
   teacher_ids: string[];
+
+  @IsOptional()
+  @IsUUID()
+  primary_room_id?: string | null;
 }

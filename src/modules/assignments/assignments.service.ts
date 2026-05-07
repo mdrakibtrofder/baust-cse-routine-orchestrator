@@ -11,17 +11,21 @@ export class AssignmentsService {
     private readonly cstRepository: Repository<CourseSectionTeacher>,
   ) {}
 
-  async findAll(semesterId: string) {
+  async findBySemester(semesterId: string) {
     return this.cstRepository.find({
       where: { semester_id: semesterId },
-      relations: ['course', 'section'],
+      relations: ['course', 'section', 'primary_room'],
     });
   }
 
-  async findOne(semesterId: string, courseId: string, sectionId: string) {
+  async getForCourseSection(courseId: string, sectionId: string, semesterId: string) {
     return this.cstRepository.findOne({
-      where: { semester_id: semesterId, course_id: courseId, section_id: sectionId },
-      relations: ['course', 'section'],
+      where: {
+        semester_id: semesterId,
+        course_id: courseId,
+        section_id: sectionId,
+      },
+      relations: ['course', 'section', 'primary_room'],
     });
   }
 
@@ -36,6 +40,7 @@ export class AssignmentsService {
 
     if (assignment) {
       assignment.teacher_ids = dto.teacher_ids;
+      assignment.primary_room_id = dto.primary_room_id ?? null;
     } else {
       assignment = this.cstRepository.create(dto);
     }
@@ -50,6 +55,7 @@ export class AssignmentsService {
       .andWhere(':teacherId = ANY(cst.teacher_ids)', { teacherId })
       .leftJoinAndSelect('cst.course', 'course')
       .leftJoinAndSelect('cst.section', 'section')
+      .leftJoinAndSelect('cst.primary_room', 'primary_room')
       .getMany();
   }
 

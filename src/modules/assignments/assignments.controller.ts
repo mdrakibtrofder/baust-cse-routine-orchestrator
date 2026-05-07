@@ -8,7 +8,7 @@ export class AssignmentsController {
 
   @Get()
   findAll(@Query('semester_id') semesterId: string) {
-    return this.assignmentsService.findAll(semesterId);
+    return this.assignmentsService.findBySemester(semesterId);
   }
 
   @Get('course/:courseId/section/:sectionId')
@@ -17,7 +17,7 @@ export class AssignmentsController {
     @Param('courseId') courseId: string,
     @Param('sectionId') sectionId: string,
   ) {
-    return this.assignmentsService.findOne(semesterId, courseId, sectionId);
+    return this.assignmentsService.getForCourseSection(courseId, sectionId, semesterId);
   }
 
   @Post()
