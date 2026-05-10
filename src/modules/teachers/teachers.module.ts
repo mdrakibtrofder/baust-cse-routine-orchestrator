@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Teacher } from '../../entities/teacher.entity';
+import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
+import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { TeachersService } from './teachers.service';
 import { TeachersController } from './teachers.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Teacher])],
+  imports: [TypeOrmModule.forFeature([Teacher, CourseSectionTeacher, TeacherUnavailability])],
   controllers: [TeachersController],
   providers: [TeachersService],
   exports: [TeachersService],

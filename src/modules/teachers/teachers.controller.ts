@@ -50,6 +50,16 @@ export class TeachersController {
     return { success: true, message: 'Teacher deleted successfully' };
   }
 
+  @Post(':id/move-assignments')
+  async moveAssignments(
+    @Param('id') fromId: string,
+    @Body('toTeacherId') toId: string,
+  ) {
+    if (!toId) throw new BadRequestException('Target teacher ID required');
+    await this.teachersService.moveAssignments(fromId, toId);
+    return { success: true, message: 'Assignments moved successfully' };
+  }
+
   @Get(':id/load')
   async getTeacherLoad(@Param('id') id: string) {
     return this.teachersService.getTeacherLoad(id);
