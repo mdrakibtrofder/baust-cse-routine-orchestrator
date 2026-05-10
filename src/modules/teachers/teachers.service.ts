@@ -19,7 +19,7 @@ export class TeachersService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async findAll(page = 1, limit = 20, search?: string) {
+  async findAll(page = 1, limit = 1000, search?: string) {
     const query = this.teacherRepository.createQueryBuilder('teacher');
 
     if (search) {
@@ -28,7 +28,7 @@ export class TeachersService {
     }
 
     const [data, total] = await query
-      .orderBy('teacher.created_at', 'DESC')
+      .orderBy('teacher.short_name', 'ASC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
