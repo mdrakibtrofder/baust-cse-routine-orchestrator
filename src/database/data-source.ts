@@ -14,6 +14,11 @@ export const dataSourceOptions: DataSourceOptions = {
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,
   logging: process.env.NODE_ENV !== 'production',
+  extra: {
+    max: 20, // max number of clients in the pool
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  },
 };
 
 const dataSource = new DataSource(dataSourceOptions);

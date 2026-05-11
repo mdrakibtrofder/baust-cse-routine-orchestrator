@@ -7,6 +7,7 @@ import { Room } from './room.entity';
 @Entity('class_slots')
 @Index(['semester_id', 'course_id', 'section_id'])
 @Index(['semester_id', 'room_id'])
+@Index(['semester_id', 'day', 'start', 'end'])
 export class ClassSlot {
   @PrimaryGeneratedColumn('uuid')
   id: string;

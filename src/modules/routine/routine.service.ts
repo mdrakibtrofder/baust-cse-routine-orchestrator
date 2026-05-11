@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Brackets } from 'typeorm';
 import { ClassSlot } from '../../entities/class-slot.entity';
 import { Teacher } from '../../entities/teacher.entity';
 import { Room } from '../../entities/room.entity';
@@ -42,15 +42,17 @@ export class RoutineService {
       .leftJoinAndSelect('slot.room', 'room')
       .where('slot.semester_id = :semesterId', { semesterId });
 
-    // Build complex where for course/section pairs
-    courseSectionPairs.forEach((pair, index) => {
-      const condition = `(slot.course_id = :courseId${index} AND slot.section_id = :sectionId${index})`;
-      if (index === 0) {
-        query.andWhere(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
-      } else {
-        query.orWhere(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
-      }
-    });
+    // Build complex where for course/section pairs using Brackets for correct logic
+    query.andWhere(new Brackets(qb => {
+      courseSectionPairs.forEach((pair, index) => {
+        const condition = `(slot.course_id = :courseId${index} AND slot.section_id = :sectionId${index})`;
+        if (index === 0) {
+          qb.where(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+        } else {
+          qb.orWhere(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+        }
+      });
+    }));
 
     const slots = await query.orderBy('slot.day', 'ASC').addOrderBy('slot.start', 'ASC').getMany();
 
