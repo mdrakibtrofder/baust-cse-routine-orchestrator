@@ -250,7 +250,7 @@ const apiClient = axios.create({
 export const api = {
   // Teachers
   teachers: {
-    list: (page = 1, limit = 20) => apiClient.get('/teachers', { params: { page, limit } }),
+    list: (page = 1, limit = 1000) => apiClient.get('/teachers', { params: { page, limit } }),
     get: (id: string) => apiClient.get(`/teachers/${id}`),
     create: (data: any) => apiClient.post('/teachers', data),
     update: (id: string, data: any) => apiClient.patch(`/teachers/${id}`, data),

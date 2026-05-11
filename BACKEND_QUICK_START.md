@@ -165,7 +165,7 @@ export class BaseService<T> {
     private readonly repository: Repository<T>,
   ) {}
 
-  async findAll(page = 1, limit = 20) {
+  async findAll(page = 1, limit = 1000) {
     const [data, total] = await this.repository.findAndCount({
       skip: (page - 1) * limit,
       take: limit,
