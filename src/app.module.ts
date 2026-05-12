@@ -18,6 +18,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { TeacherUnavailabilityModule } from './modules/teacher-unavailability/teacher-unavailability.module';
 import { RoomUnavailabilityModule } from './modules/room-unavailability/room-unavailability.module';
+import { RoutineGeneratorModule } from './modules/routine-generator/routine-generator.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { RoomUnavailabilityModule } from './modules/room-unavailability/room-una
     UsersModule,
     TeacherUnavailabilityModule,
     RoomUnavailabilityModule,
+    RoutineGeneratorModule,
   ],
   controllers: [],
   providers: [],
