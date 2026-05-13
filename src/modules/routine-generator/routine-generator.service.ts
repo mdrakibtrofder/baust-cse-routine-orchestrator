@@ -398,11 +398,24 @@ export class RoutineGeneratorService {
     return false;
   }
 
-  private timesOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
+  private timesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
     const toMin = (t: string) => {
-      const [h, m] = t.split(':').map(Number);
+      if (!t) return 0;
+      const cleanTime = t.replace(/[AP]M/i, "").trim();
+      const parts = cleanTime.includes(":") ? cleanTime.split(":") : cleanTime.split(".");
+      const h = Number(parts[0] || 0);
+      const m = Number(parts[1] || 0);
       return h * 60 + m;
     };
-    return toMin(s1) < toMin(e2) && toMin(s2) < toMin(e1);
+
+    const as = toMin(aStart);
+    let ae = toMin(aEnd);
+    const bs = toMin(bStart);
+    let be = toMin(bEnd);
+
+    if (ae <= as) ae += 24 * 60;
+    if (be <= bs) be += 24 * 60;
+
+    return as < be && bs < ae;
   }
 }
