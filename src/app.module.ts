@@ -19,6 +19,7 @@ import { UsersModule } from './modules/users/users.module';
 import { TeacherUnavailabilityModule } from './modules/teacher-unavailability/teacher-unavailability.module';
 import { RoomUnavailabilityModule } from './modules/room-unavailability/room-unavailability.module';
 import { RoutineGeneratorModule } from './modules/routine-generator/routine-generator.module';
+import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { RoutineGeneratorModule } from './modules/routine-generator/routine-gene
     TeacherUnavailabilityModule,
     RoomUnavailabilityModule,
     RoutineGeneratorModule,
+    CTScheduleModule,
   ],
   controllers: [],
   providers: [],
