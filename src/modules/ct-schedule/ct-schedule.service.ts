@@ -42,7 +42,8 @@ export class CTScheduleService {
     let settings = await this.getSettings(semesterId);
     settings.total_weeks = dto.total_weeks;
     if (dto.start_date) {
-      settings.start_date = new Date(dto.start_date);
+      // Ensure date is stored without time/timezone issues by using string part
+      settings.start_date = new Date(dto.start_date.split('T')[0]);
     }
     return this.ctSettingRepository.save(settings);
   }
@@ -55,15 +56,13 @@ export class CTScheduleService {
   }
 
   async updateWeekConfigs(semesterId: string, dto: UpdateCTWeekConfigsDto) {
-    // This is a bit complex as we might need to delete old ones or update existing
-    // For simplicity, we can clear and recreate or do upsert
-    // Let's do upsert
     for (const config of dto.configs) {
+      const dateOnly = new Date(config.date.split('T')[0]);
       let existing = await this.ctWeekConfigRepository.findOne({
         where: {
           semester_id: semesterId,
           week_number: config.week_number,
-          date: new Date(config.date),
+          date: dateOnly,
         },
       });
 
@@ -74,7 +73,7 @@ export class CTScheduleService {
         const newConfig = this.ctWeekConfigRepository.create({
           semester_id: semesterId,
           week_number: config.week_number,
-          date: new Date(config.date),
+          date: dateOnly,
           is_available: config.is_available,
         });
         await this.ctWeekConfigRepository.save(newConfig);
