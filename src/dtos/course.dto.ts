@@ -14,6 +14,9 @@ export class CreateCourseDto {
   @IsEnum(['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75'])
   course_type: 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
 
+  @IsEnum(['Departmental', 'Non-Departmental'])
+  departmental_type: 'Departmental' | 'Non-Departmental';
+
   @IsInt()
   @Min(1)
   @Max(4)

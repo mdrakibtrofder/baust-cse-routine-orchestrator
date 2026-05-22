@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
 export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
+export type DepartmentalType = 'Departmental' | 'Non-Departmental';
 
 @Entity('courses')
 @Index(['code', 'level', 'term'], { unique: true })
@@ -24,6 +25,14 @@ export class Course {
     enum: ['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75'],
   })
   course_type: CourseType;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    enum: ['Departmental', 'Non-Departmental'],
+    default: 'Departmental',
+  })
+  departmental_type: DepartmentalType;
 
   @Column({ type: 'integer' })
   level: number;
