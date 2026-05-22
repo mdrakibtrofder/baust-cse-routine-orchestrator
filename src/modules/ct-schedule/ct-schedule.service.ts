@@ -123,6 +123,21 @@ export class CTScheduleService {
       cst.course.course_type.startsWith('theory')
     );
 
+    // Filter to ensure Non-Departmental courses only get assignments for ONE section (Common CT)
+    const processedCsts: CourseSectionTeacher[] = [];
+    const nonDeptCourseIds = new Set<string>();
+
+    for (const cst of theoryCsts) {
+      if (cst.course.departmental_type === 'Non-Departmental') {
+        if (!nonDeptCourseIds.has(cst.course_id)) {
+          processedCsts.push(cst);
+          nonDeptCourseIds.add(cst.course_id);
+        }
+      } else {
+        processedCsts.push(cst);
+      }
+    }
+
     // 3. Get all available CT slots (weeks/days) starting from settings.start_week
     const availableConfigs = await this.ctWeekConfigRepository.find({
       where: { 
@@ -148,10 +163,14 @@ export class CTScheduleService {
     const roomBookings: Record<string, Set<string>> = {};
     const sectionBookings: Record<string, Set<string>> = {};
 
-    // Shuffle theoryCsts to randomize who gets which slots
-    const shuffledCsts = [...theoryCsts].sort(() => Math.random() - 0.5);
+    // Shuffle processedCsts to randomize who gets which slots
+    const shuffledCsts = [...processedCsts].sort(() => Math.random() - 0.5);
 
     for (const cst of shuffledCsts) {
+      // Determine CT count: Non-Dept usually only has 1 or follow credits? 
+      // User said "initially only one section will available not 3", 
+      // if he means CT count, then 1. If he means Section count, then processedCsts already handled it.
+      // Let's stick to credit-based for now but only one section.
       const ctCount = cst.course.credit >= 3 ? 3 : 2;
       
       for (let ctNum = 1; ctNum <= ctCount; ctNum++) {
@@ -170,16 +189,15 @@ export class CTScheduleService {
           // Rule 1: Section already has a CT on this day?
           if (sectionBookings[dateStr].has(cst.section_id)) continue;
 
-          // Rule 2: Sparse density - don't fill more than 70% of rooms on any given day
-          // unless we have no other choice (but for sparse we'll keep it strict)
-          if (roomBookings[dateStr].size >= Math.ceil(allRooms.length * 0.7)) continue;
+          // Rule 2: Sparse density - don't fill more than 50% of rooms on any given day
+          if (roomBookings[dateStr].size >= Math.ceil(allRooms.length * 0.5)) continue;
 
           // Rule 3: Don't put same course CTs too close (e.g., same week)
           const sameCourseCTs = assignments.filter(a => a.course_id === cst.course_id && a.section_id === cst.section_id);
           const isTooClose = sameCourseCTs.some(a => Math.abs(a.week_number - slot.week_number) < 2);
           if (isTooClose) continue;
 
-          // Find an available room randomly
+          // Rule 4: Critical - same day, same room check
           const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
           if (availableRooms.length === 0) continue;
 
@@ -202,14 +220,18 @@ export class CTScheduleService {
         }
 
         if (!assigned) {
-          console.warn(`Could not sparsely assign CT ${ctNum} for course ${cst.course.code} Section ${cst.section.name}. Retrying without sparse constraint...`);
-          // Retry without Rule 2 (sparse constraint) if needed
+          // Retry without Rule 2 (sparse constraint) but KEEPING Rule 1 (section) and Rule 4 (room)
           for (const slot of trialSlots) {
              const dateStr = slot.date instanceof Date ? slot.date.toISOString().split('T')[0] : (slot.date as string);
+             
+             if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
+             if (!sectionBookings[dateStr]) sectionBookings[dateStr] = new Set();
+
              if (sectionBookings[dateStr].has(cst.section_id)) continue;
+
              const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
              if (availableRooms.length > 0) {
-               const selectedRoom = availableRooms[0];
+               const selectedRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
                assignments.push({
                  semester_id: semesterId,
                  course_id: cst.course_id,
