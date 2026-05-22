@@ -1,10 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, Unique } from 'typeorm';
 
 export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
 export type DepartmentalType = 'Departmental' | 'Non-Departmental';
 
 @Entity('courses')
-@Index(['code', 'level', 'term'], { unique: true })
+@Unique('IDX_courses_code_level_term_dept', ['code', 'level', 'term', 'departmental_type'])
 @Index(['level', 'term'])
 export class Course {
   @PrimaryGeneratedColumn('uuid')
