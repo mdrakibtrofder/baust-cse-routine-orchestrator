@@ -27,6 +27,9 @@ export class CTScheduleService {
   ) {}
 
   async getSettings(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
     let settings = await this.ctSettingRepository.findOne({ where: { semester_id: semesterId } });
     if (!settings) {
       settings = this.ctSettingRepository.create({
@@ -39,6 +42,9 @@ export class CTScheduleService {
   }
 
   async updateSettings(semesterId: string, dto: UpdateCTSettingDto) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
     let settings = await this.getSettings(semesterId);
     settings.total_weeks = dto.total_weeks;
     if (dto.start_date) {
@@ -49,6 +55,7 @@ export class CTScheduleService {
   }
 
   async getWeekConfigs(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') return [];
     return this.ctWeekConfigRepository.find({
       where: { semester_id: semesterId },
       order: { week_number: 'ASC', date: 'ASC' },
@@ -56,6 +63,9 @@ export class CTScheduleService {
   }
 
   async updateWeekConfigs(semesterId: string, dto: UpdateCTWeekConfigsDto) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
     for (const config of dto.configs) {
       const dateOnly = new Date(config.date.split('T')[0]);
       let existing = await this.ctWeekConfigRepository.findOne({
@@ -83,6 +93,7 @@ export class CTScheduleService {
   }
 
   async getAssignments(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') return [];
     return this.ctAssignmentRepository.find({
       where: { semester_id: semesterId },
       relations: ['course', 'section', 'room'],
@@ -91,6 +102,9 @@ export class CTScheduleService {
   }
 
   async generateSchedule(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
     // 1. Clear existing assignments
     await this.ctAssignmentRepository.delete({ semester_id: semesterId });
 

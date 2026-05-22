@@ -1,10 +1,8 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete } from '@nestjs/common';
 import { CTScheduleService } from './ct-schedule.service';
 import { UpdateCTSettingDto, UpdateCTWeekConfigsDto } from '../../dtos/ct-schedule.dto';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('ct-schedule')
-@UseGuards(JwtAuthGuard)
 export class CTScheduleController {
   constructor(private readonly ctScheduleService: CTScheduleService) {}
 
