@@ -16,7 +16,15 @@ export class CoursesService {
     const where: any = {};
     if (level) where.level = level;
     if (term) where.term = term;
-    return this.courseRepository.find({ where, order: { level: 'ASC', term: 'ASC', code: 'ASC' } });
+    return this.courseRepository.find({ 
+      where, 
+      order: { 
+        departmental_type: 'ASC', // 'Departmental' comes before 'Non-Departmental' alphabetically
+        level: 'ASC', 
+        term: 'ASC', 
+        code: 'ASC' 
+      } 
+    });
   }
 
   async findById(id: string) {
