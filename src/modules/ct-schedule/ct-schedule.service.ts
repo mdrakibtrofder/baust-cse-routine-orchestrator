@@ -261,6 +261,20 @@ export class CTScheduleService {
     const assignment = await this.ctAssignmentRepository.findOne({ where: { id } });
     if (!assignment) throw new NotFoundException('Assignment not found');
 
+    if (dto.room_id && dto.date) {
+      const dateOnly = new Date(dto.date.split('T')[0]);
+      const collision = await this.ctAssignmentRepository.findOne({
+        where: {
+          semester_id: assignment.semester_id,
+          room_id: dto.room_id,
+          date: dateOnly,
+        },
+      });
+      if (collision && collision.id !== id) {
+        throw new ConflictException('Another CT is already scheduled in this room on this date');
+      }
+    }
+
     if (dto.room_id) assignment.room_id = dto.room_id;
     if (dto.week_number) assignment.week_number = dto.week_number;
     if (dto.date) assignment.date = new Date(dto.date.split('T')[0]);
