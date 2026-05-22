@@ -7,6 +7,11 @@ export class UpdateCTSettingDto {
   @Max(25)
   total_weeks: number;
 
+  @IsInt()
+  @Min(1)
+  @Max(25)
+  start_week: number;
+
   @IsOptional()
   @IsDateString()
   start_date?: string;
@@ -29,3 +34,18 @@ export class UpdateCTWeekConfigsDto {
   @Type(() => CTWeekDayConfigDto)
   configs: CTWeekDayConfigDto[];
 }
+
+export class UpdateCTAssignmentDto {
+  @IsUUID()
+  @IsOptional()
+  room_id?: string;
+
+  @IsInt()
+  @IsOptional()
+  week_number?: number;
+
+  @IsDateString()
+  @IsOptional()
+  date?: string;
+}
+

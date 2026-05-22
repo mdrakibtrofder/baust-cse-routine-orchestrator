@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, Put, Delete } from '@nestjs/common';
 import { CTScheduleService } from './ct-schedule.service';
-import { UpdateCTSettingDto, UpdateCTWeekConfigsDto } from '../../dtos/ct-schedule.dto';
+import { UpdateCTSettingDto, UpdateCTWeekConfigsDto, UpdateCTAssignmentDto } from '../../dtos/ct-schedule.dto';
 
 @Controller('ct-schedule')
 export class CTScheduleController {
@@ -35,4 +35,10 @@ export class CTScheduleController {
   generateSchedule(@Param('semesterId') semesterId: string) {
     return this.ctScheduleService.generateSchedule(semesterId);
   }
+
+  @Put('assignments/:id')
+  updateAssignment(@Param('id') id: string, @Body() dto: UpdateCTAssignmentDto) {
+    return this.ctScheduleService.updateAssignment(id, dto);
+  }
 }
+
