@@ -88,7 +88,8 @@ export class TeachersService {
       }
     }
 
-    await this.teacherRepository.update(id, dto);
+    const res = await this.teacherRepository.update(id, dto);
+    if (res.affected === 0) throw new NotFoundException(`Teacher with ID ${id} not found`);
     return this.findById(id);
   }
 

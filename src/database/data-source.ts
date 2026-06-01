@@ -15,11 +15,11 @@ export const dataSourceOptions: DataSourceOptions = {
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,
   logger: new CustomTypeORMLogger(),
-  logging: process.env.NODE_ENV !== 'production' ? ['error', 'warn', 'schema', 'migration'] : ['error'],
+  logging: true,
   extra: {
     max: 20, // max number of clients in the pool
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    connectionTimeoutMillis: 10000,
   },
 };
 

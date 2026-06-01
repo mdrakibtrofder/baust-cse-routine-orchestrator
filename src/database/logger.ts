@@ -5,10 +5,22 @@ export class CustomTypeORMLogger implements Logger {
   private readonly nestLogger = new NestLogger('TypeORM');
 
   logQuery(query: string, parameters?: any[], queryRunner?: QueryRunner) {
-    const sql = query.toLowerCase();
-    // Only log data-modifying queries
-    if (sql.startsWith('insert') || sql.startsWith('update') || sql.startsWith('delete')) {
-      this.nestLogger.log(`Query: ${query}${parameters?.length ? ` -- Parameters: ${JSON.stringify(parameters)}` : ''}`);
+    try {
+      const sql = query.trim().toLowerCase();
+      // Only log data-modifying queries
+      if (sql.startsWith('insert') || sql.startsWith('update') || sql.startsWith('delete')) {
+        let paramsStr = '';
+        if (parameters && parameters.length > 0) {
+          try {
+            paramsStr = ` -- Parameters: ${JSON.stringify(parameters, (_, v) => typeof v === 'bigint' ? v.toString() : v)}`;
+          } catch (e) {
+            paramsStr = ' -- Parameters: [Serialization Failed]';
+          }
+        }
+        this.nestLogger.log(`Query: ${query}${paramsStr}`);
+      }
+    } catch (e) {
+      // Ensure logger never crashes the application
     }
   }
 
