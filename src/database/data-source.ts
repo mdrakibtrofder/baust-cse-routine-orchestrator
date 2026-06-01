@@ -1,5 +1,6 @@
 import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
+import { CustomTypeORMLogger } from './logger';
 
 dotenv.config();
 
@@ -13,7 +14,8 @@ export const dataSourceOptions: DataSourceOptions = {
   entities: [__dirname + '/../entities/**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,
-  logging: process.env.NODE_ENV !== 'production',
+  logger: new CustomTypeORMLogger(),
+  logging: process.env.NODE_ENV !== 'production' ? ['error', 'warn', 'schema', 'migration'] : ['error'],
   extra: {
     max: 20, // max number of clients in the pool
     idleTimeoutMillis: 30000,
@@ -25,7 +27,7 @@ const dataSource = new DataSource(dataSourceOptions);
 
 dataSource.initialize()
   .then(() => {
-    console.log("✅ Data Source has been initialized!");
+    // Suppress initialization log as NestJS will log it
   })
   .catch((err) => {
     console.error("❌ Error during Data Source initialization", err);

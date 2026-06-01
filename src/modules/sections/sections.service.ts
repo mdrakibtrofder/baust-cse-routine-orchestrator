@@ -31,9 +31,9 @@ export class SectionsService {
   }
 
   async update(id: string, dto: UpdateSectionDto) {
-    const section = await this.findById(id);
-    Object.assign(section, dto);
-    return this.sectionRepository.save(section);
+    const res = await this.sectionRepository.update(id, dto);
+    if (res.affected === 0) throw new NotFoundException(`Section with ID ${id} not found`);
+    return this.findById(id);
   }
 
   async delete(id: string) {

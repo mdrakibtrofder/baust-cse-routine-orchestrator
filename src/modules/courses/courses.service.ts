@@ -39,9 +39,9 @@ export class CoursesService {
   }
 
   async update(id: string, dto: UpdateCourseDto) {
-    const course = await this.findById(id);
-    Object.assign(course, dto);
-    return this.courseRepository.save(course);
+    const res = await this.courseRepository.update(id, dto);
+    if (res.affected === 0) throw new NotFoundException(`Course with ID ${id} not found`);
+    return this.findById(id);
   }
 
   async delete(id: string) {

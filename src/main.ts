@@ -1,10 +1,11 @@
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, ClassSerializerInterceptor } from '@nestjs/common';
+import { ValidationPipe, ClassSerializerInterceptor, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
 
   // Global validation pipe
@@ -40,8 +41,8 @@ async function bootstrap() {
 
   const port = process.env.APP_PORT || 3000;
   await app.listen(port);
-  console.log(`✅ Application is running on: http://localhost:${port}/api`);
-  console.log(`📖 API Documentation available at: http://localhost:${port}/api/docs`);
+  logger.log(`✅ Application is running on: http://localhost:${port}/api`);
+  logger.log(`📖 API Documentation available at: http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

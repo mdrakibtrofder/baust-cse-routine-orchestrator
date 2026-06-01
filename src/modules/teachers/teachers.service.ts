@@ -88,10 +88,8 @@ export class TeachersService {
       }
     }
 
-    return await this.dataSource.transaction(async (manager) => {
-      Object.assign(teacher, dto);
-      return await manager.save(teacher);
-    });
+    await this.teacherRepository.update(id, dto);
+    return this.findById(id);
   }
 
   async delete(id: string): Promise<void> {

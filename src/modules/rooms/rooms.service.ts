@@ -28,9 +28,9 @@ export class RoomsService {
   }
 
   async update(id: string, dto: UpdateRoomDto) {
-    const room = await this.findById(id);
-    Object.assign(room, dto);
-    return this.roomRepository.save(room);
+    const res = await this.roomRepository.update(id, dto);
+    if (res.affected === 0) throw new NotFoundException(`Room with ID ${id} not found`);
+    return this.findById(id);
   }
 
   async delete(id: string) {
