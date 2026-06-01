@@ -17,9 +17,14 @@ export const dataSourceOptions: DataSourceOptions = {
   logger: new CustomTypeORMLogger(),
   logging: true,
   extra: {
-    max: 20, // max number of clients in the pool
+    max: 50, // max number of clients in the pool
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
+    keepalives: true,
+    keepalives_idle: 60,
+    statement_timeout: 60000, // 60 seconds
+    query_timeout: 60000, // 60 seconds
+    application_name: 'baust_routine_orchestrator',
   },
 };
 

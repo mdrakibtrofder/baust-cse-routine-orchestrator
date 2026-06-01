@@ -25,11 +25,31 @@ export class CustomTypeORMLogger implements Logger {
   }
 
   logQueryError(error: string | Error, query: string, parameters?: any[], queryRunner?: QueryRunner) {
-    this.nestLogger.error(`Query Error: ${error} -- Query: ${query}${parameters?.length ? ` -- Parameters: ${JSON.stringify(parameters)}` : ''}`);
+    try {
+      let paramsStr = '';
+      if (parameters && parameters.length > 0) {
+        try {
+          paramsStr = ` -- Parameters: ${JSON.stringify(parameters, (_, v) => typeof v === 'bigint' ? v.toString() : v)}`;
+        } catch (e) {
+          paramsStr = ' -- Parameters: [Serialization Failed]';
+        }
+      }
+      this.nestLogger.error(`Query Error: ${error} -- Query: ${query}${paramsStr}`);
+    } catch (e) {}
   }
 
   logQuerySlow(time: number, query: string, parameters?: any[], queryRunner?: QueryRunner) {
-    this.nestLogger.warn(`Slow Query (${time}ms): ${query}${parameters?.length ? ` -- Parameters: ${JSON.stringify(parameters)}` : ''}`);
+    try {
+      let paramsStr = '';
+      if (parameters && parameters.length > 0) {
+        try {
+          paramsStr = ` -- Parameters: ${JSON.stringify(parameters, (_, v) => typeof v === 'bigint' ? v.toString() : v)}`;
+        } catch (e) {
+          paramsStr = ' -- Parameters: [Serialization Failed]';
+        }
+      }
+      this.nestLogger.warn(`Slow Query (${time}ms): ${query}${paramsStr}`);
+    } catch (e) {}
   }
 
   logSchemaBuild(message: string, queryRunner?: QueryRunner) {

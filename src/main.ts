@@ -6,6 +6,17 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  });
+
+  process.on('uncaughtException', (err) => {
+    logger.error('Uncaught Exception thrown:', err);
+    // Give the logger time to write before exiting
+    setTimeout(() => process.exit(1), 1000);
+  });
+
   const app = await NestFactory.create(AppModule);
 
   // Global validation pipe

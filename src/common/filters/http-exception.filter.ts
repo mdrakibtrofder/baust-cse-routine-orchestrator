@@ -1,8 +1,10 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Response } from 'express';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger('AllExceptionsFilter');
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -23,6 +25,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       message = exception.message;
+      // Log the full stack for non-HTTP exceptions
+      this.logger.error(`Unhandled Exception: ${message}`, exception.stack);
+    } else {
+      this.logger.error('Unknown Exception', exception);
+    }
+
+    // Always log non-2xx errors for auditing
+    if (status >= 400) {
+      const request = ctx.getRequest();
+      this.logger.warn(`${request.method} ${request.url} - Status: ${status} - Message: ${message}`);
     }
 
     response.status(status).json({
