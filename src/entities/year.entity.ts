@@ -9,10 +9,10 @@ export class Year {
   @Column({ type: 'integer', unique: true })
   value: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @OneToMany(() => Semester, (semester) => semester.year_ref)

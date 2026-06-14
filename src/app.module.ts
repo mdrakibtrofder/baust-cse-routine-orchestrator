@@ -27,7 +27,12 @@ import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    TypeOrmModule.forRoot(dataSourceOptions),
+    TypeOrmModule.forRoot({
+      ...dataSourceOptions,
+      // Automatically retry connecting on startup (handles transient Supabase hiccups)
+      retryAttempts: 10,
+      retryDelay: 3000,
+    }),
     TeachersModule,
     RoomsModule,
     SectionsModule,

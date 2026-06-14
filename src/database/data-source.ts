@@ -16,14 +16,19 @@ export const dataSourceOptions: DataSourceOptions = {
   synchronize: false,
   logger: new CustomTypeORMLogger(),
   logging: true,
+  // Supabase uses PgBouncer — keep pool small to stay within connection limits
   extra: {
-    max: 50, // max number of clients in the pool
-    idleTimeoutMillis: 30000,
+    max: 8,
+    min: 1,
+    idleTimeoutMillis: 20000,      // must be less than PgBouncer's server_idle_timeout (default 30s)
     connectionTimeoutMillis: 10000,
-    keepalives: true,
-    keepalives_idle: 60,
-    statement_timeout: 60000, // 60 seconds
-    query_timeout: 60000, // 60 seconds
+    // TCP keepalives prevent the OS from silently dropping idle connections
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    // Supabase requires SSL
+    ssl: { rejectUnauthorized: false },
+    // Force UTC on every new connection — prevents timezone mismatch for TIMESTAMP columns
+    options: '-c timezone=UTC',
     application_name: 'baust_routine_orchestrator',
   },
 };
@@ -31,11 +36,8 @@ export const dataSourceOptions: DataSourceOptions = {
 const dataSource = new DataSource(dataSourceOptions);
 
 dataSource.initialize()
-  .then(() => {
-    // Suppress initialization log as NestJS will log it
-  })
   .catch((err) => {
-    console.error("❌ Error during Data Source initialization", err);
+    console.error('❌ Error during Data Source initialization', err);
   });
 
 export default dataSource;

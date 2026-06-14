@@ -19,10 +19,10 @@ export class CTWeekConfig {
   @Column({ type: 'boolean', default: true })
   is_available: boolean;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @ManyToOne(() => Semester)

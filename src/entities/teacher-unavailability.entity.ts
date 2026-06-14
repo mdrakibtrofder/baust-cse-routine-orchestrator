@@ -21,10 +21,10 @@ export class TeacherUnavailability {
   @Column({ type: 'varchar', length: 255, nullable: true })
   reason: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @ManyToOne(() => Teacher)

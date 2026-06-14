@@ -3,6 +3,7 @@ import { ValidationPipe, ClassSerializerInterceptor, Logger } from '@nestjs/comm
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { DbRetryInterceptor } from './common/interceptors/db-retry.interceptor';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -27,7 +28,10 @@ async function bootstrap() {
   }));
 
   // Global Class Serializer
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
+  app.useGlobalInterceptors(
+    new ClassSerializerInterceptor(app.get(Reflector)),
+    new DbRetryInterceptor(),
+  );
 
   // Global exception filter
   app.useGlobalFilters(new AllExceptionsFilter());

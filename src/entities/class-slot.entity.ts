@@ -36,10 +36,10 @@ export class ClassSlot {
   @Column({ type: 'varchar', length: 20, enum: ['EVERY', 'EVEN', 'ODD'], default: 'EVERY' })
   week: 'EVERY' | 'EVEN' | 'ODD';
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @ManyToOne(() => Semester, semester => semester.classSlots)

@@ -19,10 +19,10 @@ export class CTSetting {
   @Column({ type: 'date', nullable: true })
   start_date: Date | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @OneToOne(() => Semester)

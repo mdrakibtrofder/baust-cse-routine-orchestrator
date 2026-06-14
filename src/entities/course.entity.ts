@@ -46,9 +46,9 @@ export class Course {
   @Column({ type: 'numeric', precision: 3, scale: 2, default: 0 })
   sessional: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 }

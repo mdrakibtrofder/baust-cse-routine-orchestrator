@@ -20,9 +20,9 @@ export class Period {
   @Column({ type: 'varchar', length: 20, enum: ['theory', 'sessional'] })
   kind: 'theory' | 'sessional';
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 }

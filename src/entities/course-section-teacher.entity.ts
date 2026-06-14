@@ -25,10 +25,10 @@ export class CourseSectionTeacher {
   @Column({ type: 'uuid', nullable: true })
   primary_room_id: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @ManyToOne(() => Semester)

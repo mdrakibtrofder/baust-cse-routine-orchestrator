@@ -22,10 +22,10 @@ export class Semester {
   @Column({ type: 'boolean', default: false })
   is_active: boolean;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @ManyToOne(() => Year, (year) => year.semesters)

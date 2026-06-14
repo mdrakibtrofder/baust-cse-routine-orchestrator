@@ -24,9 +24,9 @@ export class Teacher {
   @Column({ type: 'numeric', precision: 5, scale: 2, default: 0 })
   assigned_credit_hours: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 }

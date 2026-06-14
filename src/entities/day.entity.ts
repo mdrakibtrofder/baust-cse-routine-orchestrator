@@ -9,9 +9,9 @@ export class Day {
   @Column({ type: 'varchar', length: 50 })
   name: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 }

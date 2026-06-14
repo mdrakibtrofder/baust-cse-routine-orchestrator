@@ -9,10 +9,10 @@ export class SemesterType {
   @Column({ type: 'varchar', length: 100, unique: true })
   name: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: "timestamptz" })
   updated_at: Date;
 
   @OneToMany(() => Semester, (semester) => semester.type_ref)
