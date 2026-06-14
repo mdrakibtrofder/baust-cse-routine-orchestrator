@@ -18,7 +18,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const exceptionResponse = exception.getResponse();
 
       if (typeof exceptionResponse === 'object') {
-        message = exceptionResponse['message'] || message;
+        const raw = exceptionResponse['message'];
+        message = Array.isArray(raw) ? raw.join(', ') : (raw || message);
         errorDetails = exceptionResponse;
       } else {
         message = exceptionResponse as string;
@@ -34,7 +35,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // Always log non-2xx errors for auditing
     if (status >= 400) {
       const request = ctx.getRequest();
-      this.logger.warn(`${request.method} ${request.url} - Status: ${status} - Message: ${message}`);
+      const displayMessage = Array.isArray(message) ? message.join(', ') : message;
+      this.logger.error(`${request.method} ${request.url} - Status: ${status} - Message: ${displayMessage}`);
     }
 
     response.status(status).json({
