@@ -8,12 +8,8 @@ export class TeachersController {
   constructor(private readonly teachersService: TeachersService) {}
 
   @Get()
-  async findAll(
-    @Query('page') page = 1,
-    @Query('limit') limit = 1000,
-    @Query('search') search?: string,
-  ) {
-    return this.teachersService.findAll(Number(page), Number(limit), search);
+  async findAll(@Query('search') search?: string) {
+    return this.teachersService.findAll(search);
   }
 
   @Get(':id')
