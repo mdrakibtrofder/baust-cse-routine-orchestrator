@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ClassSlot } from '../../entities/class-slot.entity';
 import { Course } from '../../entities/course.entity';
 import { Section } from '../../entities/section.entity';
@@ -30,6 +30,7 @@ export class ClassSlotsService {
     private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
     @InjectRepository(RoomUnavailability)
     private readonly roomUnavailabilityRepository: Repository<RoomUnavailability>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findBySemester(semesterId: string): Promise<ClassSlot[]> {
@@ -128,6 +129,73 @@ export class ClassSlotsService {
     });
   }
 
+  /**
+   * Atomically replace all class slots for a course-section.
+   * When force=false (default), throws ConflictException if any slot has conflicts.
+   * When force=true, skips conflict validation and saves regardless.
+   */
+  async batchReplace(
+    semesterId: string,
+    courseId: string,
+    sectionId: string,
+    slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>,
+    force = false,
+  ): Promise<ClassSlot[]> {
+    if (!force) {
+      const cst = await this.cstRepository.findOne({
+        where: { semester_id: semesterId, course_id: courseId, section_id: sectionId },
+      });
+      const teacherIds = cst ? cst.teacher_ids : [];
+
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        const conflictDto: CheckConflictsDto = {
+          semester_id: semesterId,
+          course_id: courseId,
+          section_id: sectionId,
+          day: s.day,
+          start: s.start,
+          end: s.end,
+          room_id: s.room_id,
+          week: (s.week || 'EVERY') as any,
+          teacher_ids: teacherIds,
+          ignoreCourseSectionSlots: true,
+          siblingSlots: slots
+            .filter((_, j) => j !== i)
+            .map((x, j) => ({
+              id: `__sibling_${j}__`,
+              day: x.day, start: x.start, end: x.end,
+              week: x.week || 'EVERY',
+              semester_id: semesterId, course_id: courseId, section_id: sectionId,
+            })),
+        };
+        const conflicts = await this.checkConflicts(conflictDto);
+        if (conflicts.length > 0) {
+          throw new ConflictException({
+            message: `Class ${i + 1} has conflicts: ${conflicts.map((c) => c.message).join('; ')}`,
+          });
+        }
+      }
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      await manager.delete(ClassSlot, { semester_id: semesterId, course_id: courseId, section_id: sectionId });
+      const entities = slots.map((s) =>
+        manager.create(ClassSlot, {
+          semester_id: semesterId,
+          course_id: courseId,
+          section_id: sectionId,
+          day: s.day,
+          start: s.start,
+          end: s.end,
+          room_id: s.room_id,
+          week: (s.week || 'EVERY') as any,
+        }),
+      );
+      return manager.save(ClassSlot, entities);
+    });
+  }
+
   async checkConflicts(dto: CheckConflictsDto): Promise<Conflict[]> {
     const conflicts: Conflict[] = [];
 
@@ -181,25 +249,23 @@ export class ClassSlotsService {
 
   private async checkRoomConflicts(dto: CheckConflictsDto): Promise<Conflict[]> {
     const conflicts: Conflict[] = [];
+    const room = await this.roomRepository.findOne({ where: { id: dto.room_id } });
 
-    const overlappingSlots = await this.classSlotRepository.find({
-      where: {
-        semester_id: dto.semester_id,
-        room_id: dto.room_id,
-        day: dto.day,
-      },
+    const dbSlots = await this.classSlotRepository.find({
+      where: { semester_id: dto.semester_id, room_id: dto.room_id, day: dto.day },
       relations: ['course', 'section'],
     });
+    const siblings = (dto.siblingSlots ?? []).filter((s) => s.day === dto.day);
+    const allSlots = [...dbSlots, ...siblings];
 
-    for (const slot of overlappingSlots) {
+    for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
-
-      const room = await this.roomRepository.findOne({ where: { id: dto.room_id } });
       conflicts.push({
         type: 'room_double',
-        message: `Room ${room?.name} already booked ${slot.day} ${slot.start}-${slot.end} by ${slot.course?.code} (Sec ${slot.section?.name})`,
+        message: `Room ${room?.name} already booked ${slot.day} ${slot.start}-${slot.end} by ${(slot as any).course?.code ?? 'another course'} (Sec ${(slot as any).section?.name ?? ''})`,
       });
     }
 
@@ -209,30 +275,21 @@ export class ClassSlotsService {
   private async checkTeacherConflicts(dto: CheckConflictsDto): Promise<Conflict[]> {
     const conflicts: Conflict[] = [];
 
-    const teacherSlots = await this.classSlotRepository.find({
-      where: {
-        semester_id: dto.semester_id,
-        day: dto.day,
-      },
+    const dbSlots = await this.classSlotRepository.find({
+      where: { semester_id: dto.semester_id, day: dto.day },
       relations: ['course', 'section'],
     });
+    const siblings = (dto.siblingSlots ?? []).filter((s) => s.day === dto.day);
+    const allSlots = [...dbSlots, ...siblings];
 
-    for (const slot of teacherSlots) {
+    for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
 
       const cst = await this.cstRepository.findOne({
-        where: {
-          semester_id: dto.semester_id,
-          course_id: slot.course_id,
-          section_id: slot.section_id,
-        },
+        where: { semester_id: dto.semester_id, course_id: slot.course_id, section_id: slot.section_id },
       });
-
-      if (!cst) continue;
-
-      const hasCommonTeacher = cst.teacher_ids.some(tid => dto.teacher_ids.includes(tid));
-      if (!hasCommonTeacher) continue;
-
+      if (!cst || !cst.teacher_ids.some((tid) => dto.teacher_ids.includes(tid))) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
@@ -287,23 +344,22 @@ export class ClassSlotsService {
   private async checkSectionConflicts(dto: CheckConflictsDto): Promise<Conflict[]> {
     const conflicts: Conflict[] = [];
 
-    const sectionSlots = await this.classSlotRepository.find({
-      where: {
-        semester_id: dto.semester_id,
-        section_id: dto.section_id,
-        day: dto.day,
-      },
+    const dbSlots = await this.classSlotRepository.find({
+      where: { semester_id: dto.semester_id, section_id: dto.section_id, day: dto.day },
       relations: ['course'],
     });
+    const siblings = (dto.siblingSlots ?? []).filter((s) => s.day === dto.day && s.section_id === dto.section_id);
+    const allSlots = [...dbSlots, ...siblings];
 
-    for (const slot of sectionSlots) {
+    for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
       conflicts.push({
         type: 'section_double',
-        message: `Section already has class ${slot.day} ${slot.start}-${slot.end} for ${slot.course?.code}`,
+        message: `Section already has class ${slot.day} ${slot.start}-${slot.end} for ${(slot as any).course?.code ?? 'another course'}`,
       });
     }
 

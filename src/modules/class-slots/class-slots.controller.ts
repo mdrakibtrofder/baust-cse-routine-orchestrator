@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, BadRequestException } from '@nestjs/common';
 import { ClassSlotsService } from './class-slots.service';
 import { CreateClassSlotDto } from '../../dtos/class-slot.dto';
 import { UpdateClassSlotDto } from '../../dtos/update-dtos/update-class-slot.dto';
@@ -28,6 +28,31 @@ export class ClassSlotsController {
   async checkConflicts(@Body() dto: CheckConflictsDto) {
     const conflicts = await this.classSlotsService.checkConflicts(dto);
     return { conflicts, hasConflicts: conflicts.length > 0 };
+  }
+
+  @Post('batch-replace')
+  async batchReplace(
+    @Body() body: {
+      semester_id: string;
+      course_id: string;
+      section_id: string;
+      slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>;
+      force?: boolean;
+    },
+  ) {
+    if (!body.semester_id || !body.course_id || !body.section_id) {
+      throw new BadRequestException('semester_id, course_id, and section_id are required');
+    }
+    if (!Array.isArray(body.slots)) {
+      throw new BadRequestException('slots must be an array');
+    }
+    return this.classSlotsService.batchReplace(
+      body.semester_id,
+      body.course_id,
+      body.section_id,
+      body.slots,
+      body.force ?? false,
+    );
   }
 
   @Patch(':id')

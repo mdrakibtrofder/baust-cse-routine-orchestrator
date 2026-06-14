@@ -34,4 +34,10 @@ export class CheckConflictsDto {
   @IsOptional()
   @IsUUID()
   ignoreSlotId?: string;
+
+  @IsOptional()
+  ignoreCourseSectionSlots?: boolean;
+
+  @IsOptional()
+  siblingSlots?: Array<{ id: string; day: string; start: string; end: string; week: string; semester_id: string; course_id: string; section_id: string }>;
 }
