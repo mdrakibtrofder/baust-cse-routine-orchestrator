@@ -179,7 +179,17 @@ export class ClassSlotsService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      await manager.delete(ClassSlot, { semester_id: semesterId, course_id: courseId, section_id: sectionId });
+      // Only delete non-lab-group slots; lab group slots are managed separately
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(ClassSlot)
+        .where('semester_id = :semesterId AND course_id = :courseId AND section_id = :sectionId AND lab_group_id IS NULL', {
+          semesterId,
+          courseId,
+          sectionId,
+        })
+        .execute();
       const entities = slots.map((s) =>
         manager.create(ClassSlot, {
           semester_id: semesterId,

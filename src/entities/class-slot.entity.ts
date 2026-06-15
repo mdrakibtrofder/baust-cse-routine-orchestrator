@@ -36,6 +36,10 @@ export class ClassSlot {
   @Column({ type: 'varchar', length: 20, enum: ['EVERY', 'EVEN', 'ODD'], default: 'EVERY' })
   week: 'EVERY' | 'EVEN' | 'ODD';
 
+  /** When set, this slot belongs to a lab group (not a regular section assignment) */
+  @Column({ type: 'uuid', nullable: true })
+  lab_group_id: string | null;
+
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
