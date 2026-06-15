@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { dataSourceOptions } from './database/data-source';
 import { TeachersModule } from './modules/teachers/teachers.module';
 import { RoomsModule } from './modules/rooms/rooms.module';
+import { DepartmentsModule } from './modules/departments/departments.module';
 import { SectionsModule } from './modules/sections/sections.module';
 import { CoursesModule } from './modules/courses/courses.module';
 import { PeriodsModule } from './modules/periods/periods.module';
@@ -35,6 +36,7 @@ import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
     }),
     TeachersModule,
     RoomsModule,
+    DepartmentsModule,
     SectionsModule,
     CoursesModule,
     PeriodsModule,
