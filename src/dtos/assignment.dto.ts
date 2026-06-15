@@ -15,6 +15,10 @@ export class CreateAssignmentDto {
   teacher_ids: string[];
 
   @IsOptional()
+  @IsArray()
+  slot_teacher_ids?: string[][] | null;
+
+  @IsOptional()
   @IsUUID()
   primary_room_id?: string | null;
 }

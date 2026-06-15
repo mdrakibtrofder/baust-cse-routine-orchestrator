@@ -199,11 +199,20 @@ export class RoutineGeneratorService {
           : Math.ceil(assignment.course.credit);
         const assignedDays: string[] = [];
 
+        const isSplit = assignment.course.course_type === 'sessional_3.0' &&
+          Array.isArray(assignment.slot_teacher_ids) &&
+          assignment.slot_teacher_ids.length > 0;
+
         for (let i = 0; i < slotsNeeded; i++) {
           while (this.pauseFlag && !this.stopFlag) {
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
           if (this.stopFlag) break;
+
+          // For split-teacher sessional_3.0, use per-slot teacher for conflict checking
+          const slotTeacherIds = isSplit
+            ? (assignment.slot_teacher_ids[i] ?? assignment.teacher_ids)
+            : assignment.teacher_ids;
 
           const success = await this.generateSlot(
             semesterId,
@@ -213,7 +222,8 @@ export class RoutineGeneratorService {
             periods,
             rooms,
             teacherUnavail,
-            roomUnavail
+            roomUnavail,
+            slotTeacherIds
           );
 
           if (success) {
@@ -267,9 +277,11 @@ export class RoutineGeneratorService {
     periods: Period[],
     rooms: Room[],
     teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[]
+    roomUnavail: RoomUnavailability[],
+    slotTeacherIds?: string[]
   ): Promise<boolean> {
     const isSessional = assignment.course.course_type.includes('sessional');
+    const effectiveTeacherIds = slotTeacherIds ?? assignment.teacher_ids;
     
     // Shuffle days and periods to avoid always picking the first one
     const shuffledDays = [...days].sort(() => Math.random() - 0.5);
@@ -308,7 +320,8 @@ export class RoutineGeneratorService {
             room,
             assignment,
             teacherUnavail,
-            roomUnavail
+            roomUnavail,
+            effectiveTeacherIds
           );
 
           if (!hasConflicts) {
@@ -340,7 +353,8 @@ export class RoutineGeneratorService {
     room: Room,
     assignment: CourseSectionTeacher,
     teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[]
+    roomUnavail: RoomUnavailability[],
+    overrideTeacherIds?: string[]
   ): Promise<boolean> {
     // 1. Room conflict (already assigned)
     const roomConflict = await this.classSlotRepository.findOne({
@@ -375,7 +389,8 @@ export class RoutineGeneratorService {
     if (sectionConflict) return true;
 
     // 4. Teacher conflict
-    for (const teacherId of assignment.teacher_ids) {
+    const teacherIdsToCheck = overrideTeacherIds ?? assignment.teacher_ids;
+    for (const teacherId of teacherIdsToCheck) {
       // Check if teacher assigned to another class
       const teacherSlots = await this.classSlotRepository.createQueryBuilder('slot')
         .innerJoin(CourseSectionTeacher, 'cst', 'cst.course_id = slot.course_id AND cst.section_id = slot.section_id AND cst.semester_id = slot.semester_id')

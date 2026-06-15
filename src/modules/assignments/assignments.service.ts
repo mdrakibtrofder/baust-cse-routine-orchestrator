@@ -40,6 +40,7 @@ export class AssignmentsService {
 
     if (assignment) {
       assignment.teacher_ids = dto.teacher_ids;
+      assignment.slot_teacher_ids = dto.slot_teacher_ids ?? null;
       assignment.primary_room_id = dto.primary_room_id ?? null;
     } else {
       assignment = this.cstRepository.create(dto);

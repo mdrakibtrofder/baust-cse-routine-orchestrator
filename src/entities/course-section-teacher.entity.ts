@@ -22,6 +22,9 @@ export class CourseSectionTeacher {
   @Column({ type: 'uuid', array: true, default: () => 'array[]::uuid[]' })
   teacher_ids: string[];
 
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  slot_teacher_ids: string[][] | null;
+
   @Column({ type: 'uuid', nullable: true })
   primary_room_id: string | null;
 
