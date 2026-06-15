@@ -1,7 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, Unique, ManyToOne, JoinColumn } from 'typeorm';
 import { Department } from './department.entity';
 
-export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
+export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75' | 'sessional_3.0';
 export type DepartmentalType = 'Departmental' | 'Non-Departmental';
 
 @Entity('courses')
@@ -23,7 +23,7 @@ export class Course {
   @Column({
     type: 'varchar',
     length: 20,
-    enum: ['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75'],
+    enum: ['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75', 'sessional_3.0'],
   })
   course_type: CourseType;
 

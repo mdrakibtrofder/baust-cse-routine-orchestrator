@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsEnum, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsNumber, IsEnum, IsInt, IsOptional, IsUUID, Min, Max } from 'class-validator';
 
 export class CreateCourseDto {
   @IsString()
@@ -11,11 +11,15 @@ export class CreateCourseDto {
   @Min(0)
   credit: number;
 
-  @IsEnum(['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75'])
-  course_type: 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75';
+  @IsEnum(['theory_2.0', 'theory_3.0', 'sessional_1.5', 'sessional_0.75', 'sessional_3.0'])
+  course_type: 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessional_0.75' | 'sessional_3.0';
 
   @IsEnum(['Departmental', 'Non-Departmental'])
   departmental_type: 'Departmental' | 'Non-Departmental';
+
+  @IsOptional()
+  @IsUUID()
+  department_id?: string | null;
 
   @IsInt()
   @Min(1)
@@ -25,11 +29,11 @@ export class CreateCourseDto {
   @IsEnum(['I', 'II'])
   term: 'I' | 'II';
 
-  @IsInt()
+  @IsNumber()
   @Min(0)
   theory: number;
 
-  @IsInt()
+  @IsNumber()
   @Min(0)
   sessional: number;
 }

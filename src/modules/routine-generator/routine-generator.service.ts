@@ -168,7 +168,7 @@ export class RoutineGeneratorService {
         if (a.course.course_type.includes('theory')) {
           total += Math.ceil(a.course.credit);
         } else {
-          total += 1; // Sessional usually 1 slot
+          total += a.course.course_type === 'sessional_3.0' ? 2 : 1;
         }
       }
       this.progress.totalSlots = total;
@@ -194,7 +194,9 @@ export class RoutineGeneratorService {
           continue;
         }
 
-        const slotsNeeded = isSessional ? 1 : Math.ceil(assignment.course.credit);
+        const slotsNeeded = isSessional
+          ? assignment.course.course_type === 'sessional_3.0' ? 2 : 1
+          : Math.ceil(assignment.course.credit);
         const assignedDays: string[] = [];
 
         for (let i = 0; i < slotsNeeded; i++) {
