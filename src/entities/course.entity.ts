@@ -5,7 +5,7 @@ export type CourseType = 'theory_2.0' | 'theory_3.0' | 'sessional_1.5' | 'sessio
 export type DepartmentalType = 'Departmental' | 'Non-Departmental';
 
 @Entity('courses')
-@Unique('IDX_courses_code_level_term_dept', ['code', 'level', 'term', 'departmental_type'])
+@Unique('IDX_courses_code_level_term_dept', ['code', 'level', 'term', 'departmental_type', 'department_id'])
 @Index(['level', 'term'])
 export class Course {
   @PrimaryGeneratedColumn('uuid')
