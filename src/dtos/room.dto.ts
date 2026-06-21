@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsInt, Min } from 'class-validator';
+import { IsString, IsEnum, IsInt, Min, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateRoomDto {
   @IsString()
@@ -10,4 +10,12 @@ export class CreateRoomDto {
   @IsInt()
   @Min(1)
   capacity: number;
+
+  @IsOptional()
+  @IsEnum(['Departmental', 'Non-Departmental'])
+  departmental_type?: 'Departmental' | 'Non-Departmental';
+
+  @IsOptional()
+  @IsUUID()
+  department_id?: string;
 }

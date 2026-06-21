@@ -1,4 +1,4 @@
-import { IsInt, IsEnum, IsString, Min } from 'class-validator';
+import { IsInt, IsEnum, IsString, Min, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateSectionDto {
   @IsInt()
@@ -14,4 +14,12 @@ export class CreateSectionDto {
   @IsInt()
   @Min(1)
   total_students: number;
+
+  @IsOptional()
+  @IsEnum(['Departmental', 'Non-Departmental'])
+  departmental_type?: 'Departmental' | 'Non-Departmental';
+
+  @IsOptional()
+  @IsUUID()
+  department_id?: string;
 }
