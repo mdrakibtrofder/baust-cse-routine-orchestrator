@@ -18,7 +18,7 @@ export class RoomUnavailability {
   @Column({ type: 'time' })
   end: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255 })
   reason: string;
 
   @CreateDateColumn({ type: "timestamptz" })

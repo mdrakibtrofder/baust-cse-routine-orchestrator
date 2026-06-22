@@ -18,8 +18,8 @@ export class CreateTeacherUnavailabilityDto {
   end: string;
 
   @IsString()
-  @IsOptional()
-  reason?: string;
+  @IsNotEmpty()
+  reason: string;
 }
 
 export class UpdateTeacherUnavailabilityDto {
@@ -59,8 +59,8 @@ export class CreateRoomUnavailabilityDto {
   end: string;
 
   @IsString()
-  @IsOptional()
-  reason?: string;
+  @IsNotEmpty()
+  reason: string;
 }
 
 export class UpdateRoomUnavailabilityDto {
