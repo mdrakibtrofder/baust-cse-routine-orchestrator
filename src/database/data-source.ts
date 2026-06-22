@@ -25,8 +25,6 @@ export const dataSourceOptions: DataSourceOptions = {
     // TCP keepalives prevent the OS from silently dropping idle connections
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
-    // Supabase requires SSL
-    ssl: { rejectUnauthorized: false },
     // Force UTC on every new connection — prevents timezone mismatch for TIMESTAMP columns
     options: '-c timezone=UTC',
     application_name: 'baust_routine_orchestrator',

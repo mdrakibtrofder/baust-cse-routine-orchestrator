@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Section } from '../../entities/section.entity';
@@ -25,12 +25,50 @@ export class SectionsService {
     return section;
   }
 
+  /** Same level+term+name is only a clash within the same department.
+   *  Different departments may freely reuse the same section name (e.g. both
+   *  CSE and EEE can have a "Section A" for Level 2 Term I). */
+  private async assertNoDuplicate(
+    level: number,
+    term: 'I' | 'II',
+    name: string,
+    department_id: string | null | undefined,
+    ignoreId?: string,
+  ) {
+    const existing = await this.sectionRepository
+      .createQueryBuilder('section')
+      .where('section.level = :level', { level })
+      .andWhere('section.term = :term', { term })
+      .andWhere('LOWER(section.name) = LOWER(:name)', { name })
+      .andWhere(
+        department_id ? 'section.department_id = :department_id' : 'section.department_id IS NULL',
+        department_id ? { department_id } : {},
+      )
+      .andWhere(ignoreId ? 'section.id != :ignoreId' : '1=1', ignoreId ? { ignoreId } : {})
+      .getOne();
+
+    if (existing) {
+      throw new ConflictException(
+        `Section "${name}" already exists for Level ${level} Term ${term} in this department.`,
+      );
+    }
+  }
+
   async create(dto: CreateSectionDto) {
+    await this.assertNoDuplicate(dto.level, dto.term, dto.name, dto.department_id);
     const section = this.sectionRepository.create(dto);
     return this.sectionRepository.save(section);
   }
 
   async update(id: string, dto: UpdateSectionDto) {
+    const current = await this.findById(id);
+    await this.assertNoDuplicate(
+      dto.level ?? current.level,
+      dto.term ?? current.term,
+      dto.name ?? current.name,
+      dto.department_id !== undefined ? dto.department_id : current.department_id,
+      id,
+    );
     const res = await this.sectionRepository.update(id, dto);
     if (res.affected === 0) throw new NotFoundException(`Section with ID ${id} not found`);
     return this.findById(id);

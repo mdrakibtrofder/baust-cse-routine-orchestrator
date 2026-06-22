@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { Department } from './department.entity';
 
 @Entity('sections')
-@Index(['level', 'term', 'name'], { unique: true })
+@Index(['level', 'term', 'name', 'department_id'], { unique: true })
 export class Section {
   @PrimaryGeneratedColumn('uuid')
   id: string;
