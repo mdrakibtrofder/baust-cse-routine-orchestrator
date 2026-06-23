@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { ClassSlot } from '../../entities/class-slot.entity';
-import { BatchSaveLabSectionsDto } from '../../dtos/lab-section.dto';
+import { BatchSaveLabSectionsDto, UpdateLabSectionDto } from '../../dtos/lab-section.dto';
 
 @Injectable()
 export class LabSectionsService {
@@ -64,6 +64,14 @@ export class LabSectionsService {
       }
       return results;
     });
+  }
+
+  async update(id: string, dto: UpdateLabSectionDto): Promise<CourseLabSection> {
+    const lg = await this.repo.findOne({ where: { id } });
+    if (!lg) throw new NotFoundException(`Lab section ${id} not found`);
+    if (dto.primary_room_id !== undefined) lg.primary_room_id = dto.primary_room_id;
+    if (dto.teacher_ids !== undefined) lg.teacher_ids = dto.teacher_ids;
+    return this.repo.save(lg);
   }
 
   async delete(id: string): Promise<void> {

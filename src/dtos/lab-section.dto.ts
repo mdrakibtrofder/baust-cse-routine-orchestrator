@@ -33,3 +33,16 @@ export class BatchSaveLabSectionsDto {
   @Type(() => LabSectionItemDto)
   lab_sections: LabSectionItemDto[];
 }
+
+/** Quick single-field edits (e.g. picking a room from Room & Time Mapping) without
+ *  re-submitting the whole batch. */
+export class UpdateLabSectionDto {
+  @IsOptional()
+  @IsUUID()
+  primary_room_id?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  teacher_ids?: string[];
+}

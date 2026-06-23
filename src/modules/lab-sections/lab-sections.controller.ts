@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Delete, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { LabSectionsService } from './lab-sections.service';
-import { BatchSaveLabSectionsDto } from '../../dtos/lab-section.dto';
+import { BatchSaveLabSectionsDto, UpdateLabSectionDto } from '../../dtos/lab-section.dto';
 import { IsArray } from 'class-validator';
 
 class BatchReplaceSlotsDto {
@@ -33,6 +33,11 @@ export class LabSectionsController {
   @Post(':id/slots/batch-replace')
   batchReplaceSlots(@Param('id') id: string, @Body() dto: BatchReplaceSlotsDto) {
     return this.service.batchReplaceSlots(id, dto.slots);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateLabSectionDto) {
+    return this.service.update(id, dto);
   }
 
   @Delete(':id')
