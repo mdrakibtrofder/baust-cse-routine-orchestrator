@@ -21,7 +21,7 @@ import { TeacherUnavailabilityModule } from './modules/teacher-unavailability/te
 import { RoomUnavailabilityModule } from './modules/room-unavailability/room-unavailability.module';
 import { RoutineGeneratorModule } from './modules/routine-generator/routine-generator.module';
 import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
-import { LabGroupsModule } from './modules/lab-groups/lab-groups.module';
+import { LabSectionsModule } from './modules/lab-sections/lab-sections.module';
 
 @Module({
   imports: [
@@ -54,7 +54,7 @@ import { LabGroupsModule } from './modules/lab-groups/lab-groups.module';
     RoomUnavailabilityModule,
     RoutineGeneratorModule,
     CTScheduleModule,
-    LabGroupsModule,
+    LabSectionsModule,
   ],
   controllers: [],
   providers: [],

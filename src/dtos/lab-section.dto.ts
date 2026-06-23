@@ -1,14 +1,16 @@
 import { IsArray, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class LabGroupItemDto {
+export class LabSectionItemDto {
   @IsString()
   @MinLength(1)
   @MaxLength(20)
   label: string;
 
-  @IsUUID()
-  section_id: string;
+  /** Actual section(s) this lab section's classes count toward — many-to-many. */
+  @IsArray()
+  @IsUUID('all', { each: true })
+  section_ids: string[];
 
   @IsArray()
   @IsUUID('all', { each: true })
@@ -19,7 +21,7 @@ export class LabGroupItemDto {
   primary_room_id?: string | null;
 }
 
-export class BatchSaveLabGroupsDto {
+export class BatchSaveLabSectionsDto {
   @IsUUID()
   semester_id: string;
 
@@ -28,6 +30,6 @@ export class BatchSaveLabGroupsDto {
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => LabGroupItemDto)
-  lab_groups: LabGroupItemDto[];
+  @Type(() => LabSectionItemDto)
+  lab_sections: LabSectionItemDto[];
 }

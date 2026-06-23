@@ -1,16 +1,16 @@
 import { Controller, Get, Post, Delete, Body, Param, Query } from '@nestjs/common';
-import { LabGroupsService } from './lab-groups.service';
-import { BatchSaveLabGroupsDto } from '../../dtos/lab-group.dto';
-import { IsUUID, IsArray } from 'class-validator';
+import { LabSectionsService } from './lab-sections.service';
+import { BatchSaveLabSectionsDto } from '../../dtos/lab-section.dto';
+import { IsArray } from 'class-validator';
 
 class BatchReplaceSlotsDto {
   @IsArray()
   slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>;
 }
 
-@Controller('lab-groups')
-export class LabGroupsController {
-  constructor(private readonly service: LabGroupsService) {}
+@Controller('lab-sections')
+export class LabSectionsController {
+  constructor(private readonly service: LabSectionsService) {}
 
   @Get()
   findBySemester(@Query('semester_id') semesterId: string) {
@@ -26,7 +26,7 @@ export class LabGroupsController {
   }
 
   @Post('batch')
-  batchSave(@Body() dto: BatchSaveLabGroupsDto) {
+  batchSave(@Body() dto: BatchSaveLabSectionsDto) {
     return this.service.batchSave(dto);
   }
 

@@ -1,67 +1,65 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { CourseLabGroup } from '../../entities/course-lab-group.entity';
+import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { ClassSlot } from '../../entities/class-slot.entity';
-import { BatchSaveLabGroupsDto } from '../../dtos/lab-group.dto';
+import { BatchSaveLabSectionsDto } from '../../dtos/lab-section.dto';
 
 @Injectable()
-export class LabGroupsService {
+export class LabSectionsService {
   constructor(
-    @InjectRepository(CourseLabGroup)
-    private readonly repo: Repository<CourseLabGroup>,
+    @InjectRepository(CourseLabSection)
+    private readonly repo: Repository<CourseLabSection>,
     @InjectRepository(ClassSlot)
     private readonly slotRepo: Repository<ClassSlot>,
     private readonly dataSource: DataSource,
   ) {}
 
-  async findBySemester(semesterId: string): Promise<CourseLabGroup[]> {
+  async findBySemester(semesterId: string): Promise<CourseLabSection[]> {
     return this.repo.find({ where: { semester_id: semesterId } });
   }
 
-  async findByCourse(semesterId: string, courseId: string): Promise<CourseLabGroup[]> {
+  async findByCourse(semesterId: string, courseId: string): Promise<CourseLabSection[]> {
     return this.repo.find({ where: { semester_id: semesterId, course_id: courseId } });
   }
 
   /**
-   * Atomically replace all lab groups for a course in a semester.
-   * Deleted lab groups cascade-delete their class slots (via FK ON DELETE CASCADE).
+   * Atomically replace all lab sections for a course in a semester.
+   * Deleted lab sections cascade-delete their class slots (via FK ON DELETE CASCADE).
    */
-  async batchSave(dto: BatchSaveLabGroupsDto): Promise<CourseLabGroup[]> {
+  async batchSave(dto: BatchSaveLabSectionsDto): Promise<CourseLabSection[]> {
     return this.dataSource.transaction(async (manager) => {
-      const existing = await manager.find(CourseLabGroup, {
+      const existing = await manager.find(CourseLabSection, {
         where: { semester_id: dto.semester_id, course_id: dto.course_id },
       });
 
-      const existingIds = existing.map((g) => g.id);
-      // Remove class slots for lab groups being deleted
-      const incomingLabels = dto.lab_groups.map((g) => g.label);
+      const incomingLabels = dto.lab_sections.map((g) => g.label);
       const toDelete = existing.filter((g) => !incomingLabels.includes(g.label));
       if (toDelete.length > 0) {
         for (const g of toDelete) {
-          await manager.delete(ClassSlot, { lab_group_id: g.id });
+          await manager.delete(ClassSlot, { lab_section_id: g.id });
         }
-        await manager.remove(CourseLabGroup, toDelete);
+        await manager.remove(CourseLabSection, toDelete);
       }
 
-      const results: CourseLabGroup[] = [];
-      for (const item of dto.lab_groups) {
+      const results: CourseLabSection[] = [];
+      for (const item of dto.lab_sections) {
         const match = existing.find((g) => g.label === item.label);
         if (match) {
-          match.section_id = item.section_id;
+          match.section_ids = item.section_ids;
           match.teacher_ids = item.teacher_ids;
           match.primary_room_id = item.primary_room_id ?? null;
-          results.push(await manager.save(CourseLabGroup, match));
+          results.push(await manager.save(CourseLabSection, match));
         } else {
-          const created = manager.create(CourseLabGroup, {
+          const created = manager.create(CourseLabSection, {
             semester_id: dto.semester_id,
             course_id: dto.course_id,
             label: item.label,
-            section_id: item.section_id,
+            section_ids: item.section_ids,
             teacher_ids: item.teacher_ids,
             primary_room_id: item.primary_room_id ?? null,
           });
-          results.push(await manager.save(CourseLabGroup, created));
+          results.push(await manager.save(CourseLabSection, created));
         }
       }
       return results;
@@ -70,30 +68,32 @@ export class LabGroupsService {
 
   async delete(id: string): Promise<void> {
     const lg = await this.repo.findOne({ where: { id } });
-    if (!lg) throw new NotFoundException(`Lab group ${id} not found`);
-    // Delete associated slots first
-    await this.slotRepo.delete({ lab_group_id: id });
+    if (!lg) throw new NotFoundException(`Lab section ${id} not found`);
+    await this.slotRepo.delete({ lab_section_id: id });
     await this.repo.remove(lg);
   }
 
   /**
-   * Replace all class slots for a specific lab group.
+   * Replace all class slots for a specific lab section. A slot represents one physical
+   * meeting shared by every actual section in the lab section's `section_ids` mapping,
+   * so `section_id` is left null on these slots — the affected sections are derived from
+   * the lab section itself wherever slots are read (routine views, conflict checks).
    */
   async batchReplaceSlots(
-    labGroupId: string,
+    labSectionId: string,
     slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>,
   ): Promise<ClassSlot[]> {
-    const lg = await this.repo.findOne({ where: { id: labGroupId } });
-    if (!lg) throw new NotFoundException(`Lab group ${labGroupId} not found`);
+    const lg = await this.repo.findOne({ where: { id: labSectionId } });
+    if (!lg) throw new NotFoundException(`Lab section ${labSectionId} not found`);
 
     return this.dataSource.transaction(async (manager) => {
-      await manager.delete(ClassSlot, { lab_group_id: labGroupId });
+      await manager.delete(ClassSlot, { lab_section_id: labSectionId });
       const entities = slots.map((s) =>
         manager.create(ClassSlot, {
           semester_id: lg.semester_id,
           course_id: lg.course_id,
-          section_id: lg.section_id,
-          lab_group_id: labGroupId,
+          section_id: null,
+          lab_section_id: labSectionId,
           day: s.day,
           start: s.start,
           end: s.end,

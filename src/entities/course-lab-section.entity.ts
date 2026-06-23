@@ -1,13 +1,12 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Unique, Index } from 'typeorm';
 import { Semester } from './semester.entity';
 import { Course } from './course.entity';
-import { Section } from './section.entity';
 import { Room } from './room.entity';
 
-@Entity('course_lab_groups')
-@Unique('UQ_course_lab_groups_semester_course_label', ['semester_id', 'course_id', 'label'])
+@Entity('course_lab_sections')
+@Unique('UQ_course_lab_sections_semester_course_label', ['semester_id', 'course_id', 'label'])
 @Index(['semester_id', 'course_id'])
-export class CourseLabGroup {
+export class CourseLabSection {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -17,13 +16,14 @@ export class CourseLabGroup {
   @Column({ type: 'uuid' })
   course_id: string;
 
-  /** Display label for this lab group, e.g. "A", "B", "C" */
+  /** Display label for this lab section, e.g. "A", "B", "C" */
   @Column({ type: 'varchar', length: 20 })
   label: string;
 
-  /** The actual section this lab group belongs to */
-  @Column({ type: 'uuid' })
-  section_id: string;
+  /** The actual section(s) this lab section's classes count toward — many-to-many,
+   *  e.g. Lab Section B may map to both actual Section A and Section B. */
+  @Column({ type: 'uuid', array: true, default: () => 'array[]::uuid[]' })
+  section_ids: string[];
 
   @Column({ type: 'uuid', array: true, default: () => 'array[]::uuid[]' })
   teacher_ids: string[];
@@ -44,10 +44,6 @@ export class CourseLabGroup {
   @ManyToOne(() => Course, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'course_id' })
   course: Course;
-
-  @ManyToOne(() => Section, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'section_id' })
-  section: Section;
 
   @ManyToOne(() => Room, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'primary_room_id' })

@@ -18,8 +18,10 @@ export class ClassSlot {
   @Column({ type: 'uuid' })
   course_id: string;
 
-  @Column({ type: 'uuid' })
-  section_id: string;
+  /** Null when this slot belongs to a lab section instead — the affected actual
+   *  section(s) are then derived from the lab section's own `section_ids` mapping. */
+  @Column({ type: 'uuid', nullable: true })
+  section_id: string | null;
 
   @Column({ type: 'uuid', nullable: true })
   room_id: string | null;
@@ -36,9 +38,9 @@ export class ClassSlot {
   @Column({ type: 'varchar', length: 20, enum: ['EVERY', 'EVEN', 'ODD'], default: 'EVERY' })
   week: 'EVERY' | 'EVEN' | 'ODD';
 
-  /** When set, this slot belongs to a lab group (not a regular section assignment) */
+  /** When set, this slot belongs to a lab section (not a regular section assignment) */
   @Column({ type: 'uuid', nullable: true })
-  lab_group_id: string | null;
+  lab_section_id: string | null;
 
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
@@ -54,9 +56,9 @@ export class ClassSlot {
   @JoinColumn({ name: 'course_id' })
   course: Course;
 
-  @ManyToOne(() => Section)
+  @ManyToOne(() => Section, { nullable: true })
   @JoinColumn({ name: 'section_id' })
-  section: Section;
+  section: Section | null;
 
   @ManyToOne(() => Room, { nullable: true })
   @JoinColumn({ name: 'room_id' })
