@@ -24,4 +24,8 @@ export class AppSettingsService {
     Object.assign(current, dto);
     return this.repo.save(current);
   }
+
+  async save(entity: AppSetting): Promise<AppSetting> {
+    return this.repo.save(entity);
+  }
 }

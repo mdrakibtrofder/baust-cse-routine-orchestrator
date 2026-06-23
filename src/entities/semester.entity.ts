@@ -22,6 +22,21 @@ export class Semester {
   @Column({ type: 'boolean', default: false })
   is_active: boolean;
 
+  @Column({ type: 'varchar', length: 150, nullable: true, unique: true })
+  schema_name: string | null;
+
+  @Column({ type: 'varchar', length: 30, default: 'PENDING' })
+  schema_status: string;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  schema_source_name: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  schema_last_synced_at: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  schema_error: string | null;
+
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 

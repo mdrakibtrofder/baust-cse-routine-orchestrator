@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bullmq';
+import { ScheduleModule } from '@nestjs/schedule';
 import { dataSourceOptions } from './database/data-source';
 import { TeachersModule } from './modules/teachers/teachers.module';
 import { RoomsModule } from './modules/rooms/rooms.module';
@@ -23,6 +25,7 @@ import { RoutineGeneratorModule } from './modules/routine-generator/routine-gene
 import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
 import { LabSectionsModule } from './modules/lab-sections/lab-sections.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
+import { SchemaMigrationsModule } from './modules/schema-migrations/schema-migrations.module';
 
 @Module({
   imports: [
@@ -36,6 +39,15 @@ import { AppSettingsModule } from './modules/app-settings/app-settings.module';
       retryAttempts: 10,
       retryDelay: 3000,
     }),
+    BullModule.forRoot({
+      connection: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+        db: parseInt(process.env.REDIS_DB || '0', 10),
+      },
+    }),
+    ScheduleModule.forRoot(),
     TeachersModule,
     RoomsModule,
     DepartmentsModule,
@@ -57,6 +69,7 @@ import { AppSettingsModule } from './modules/app-settings/app-settings.module';
     CTScheduleModule,
     LabSectionsModule,
     AppSettingsModule,
+    SchemaMigrationsModule,
   ],
   controllers: [],
   providers: [],
