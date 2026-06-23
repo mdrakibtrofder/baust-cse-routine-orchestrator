@@ -20,6 +20,12 @@ export class Period {
   @Column({ type: 'varchar', length: 20, enum: ['theory', 'sessional'] })
   kind: 'theory' | 'sessional';
 
+  /** Marks this period as a break (e.g. lunch/prayer break) rather than a class slot.
+   *  Rendered as a distinct BREAK column in routine views, gated by the global
+   *  "show break column" setting. */
+  @Column({ type: 'boolean', default: false })
+  is_break: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 

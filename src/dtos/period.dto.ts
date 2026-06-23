@@ -1,4 +1,4 @@
-import { IsString, Matches, IsInt, Min, IsEnum } from 'class-validator';
+import { IsString, Matches, IsInt, Min, IsEnum, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreatePeriodDto {
   @IsString()
@@ -16,4 +16,8 @@ export class CreatePeriodDto {
 
   @IsEnum(['theory', 'sessional'])
   kind: 'theory' | 'sessional';
+
+  @IsOptional()
+  @IsBoolean()
+  is_break?: boolean;
 }

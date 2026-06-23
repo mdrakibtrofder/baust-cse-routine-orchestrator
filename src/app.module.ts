@@ -22,6 +22,7 @@ import { RoomUnavailabilityModule } from './modules/room-unavailability/room-una
 import { RoutineGeneratorModule } from './modules/routine-generator/routine-generator.module';
 import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
 import { LabSectionsModule } from './modules/lab-sections/lab-sections.module';
+import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { LabSectionsModule } from './modules/lab-sections/lab-sections.module';
     RoutineGeneratorModule,
     CTScheduleModule,
     LabSectionsModule,
+    AppSettingsModule,
   ],
   controllers: [],
   providers: [],
