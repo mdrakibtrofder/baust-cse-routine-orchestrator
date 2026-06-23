@@ -228,7 +228,8 @@ export class ClassSlotsService {
 
         const isTheory = course.course_type.includes('theory');
         const isSessional = course.course_type.includes('sessional');
-        if ((isTheory && room.room_type !== 'Theory') || (isSessional && room.room_type !== 'Sessional')) {
+        const roomOk = room.room_type === 'Both' || (isTheory && room.room_type === 'Theory') || (isSessional && room.room_type === 'Sessional');
+        if (!roomOk) {
           conflicts.push({
             type: 'room_type',
             message: `Room ${room.name} is ${room.room_type} but course needs ${isTheory ? 'Theory' : 'Sessional'}`,

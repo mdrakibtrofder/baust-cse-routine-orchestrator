@@ -10,8 +10,9 @@ export class Room {
   @Column({ type: 'varchar', length: 100 })
   name: string;
 
-  @Column({ type: 'varchar', length: 20, enum: ['Theory', 'Sessional'] })
-  room_type: 'Theory' | 'Sessional';
+  /** "Both" means the room can be used for either theory or sessional classes. */
+  @Column({ type: 'varchar', length: 20, enum: ['Theory', 'Sessional', 'Both'] })
+  room_type: 'Theory' | 'Sessional' | 'Both';
 
   @Column({ type: 'integer' })
   capacity: number;

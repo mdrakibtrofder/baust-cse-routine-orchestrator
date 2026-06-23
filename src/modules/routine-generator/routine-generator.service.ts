@@ -305,10 +305,10 @@ export class RoutineGeneratorService {
           if (primaryRoom) candidateRooms.push(primaryRoom);
         }
         
-        // Add other rooms that match type and capacity
-        candidateRooms.push(...rooms.filter(r => 
-          r.id !== assignment.primary_room_id && 
-          r.room_type === requiredRoomType &&
+        // Add other rooms that match type (or are usable for both) and capacity
+        candidateRooms.push(...rooms.filter(r =>
+          r.id !== assignment.primary_room_id &&
+          (r.room_type === requiredRoomType || r.room_type === 'Both') &&
           r.capacity >= assignment.section.total_students
         ).sort(() => Math.random() - 0.5));
 
