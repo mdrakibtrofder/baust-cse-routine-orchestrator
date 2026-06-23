@@ -156,62 +156,59 @@ export class CTScheduleService {
     // 4. Get all rooms (Theory + Sessional)
     const allRooms = await this.roomRepository.find();
 
-    // 5. Plan assignments - all sections' same CT number on same date
+    // 5. Plan assignments - group by level-term, all sections' same CT on same date
     const assignments: Partial<CTAssignment>[] = [];
 
     // Keep track of bookings: date -> room_id -> boolean
     const roomBookings: Record<string, Set<string>> = {};
-    const ctDateMap: Record<number, Date> = {}; // CT number -> assigned date (all sections same CT on same date)
 
-    // Process courses in order, then process each CT number in sequence (CT1, CT2, CT3, etc.)
-    const uniqueCourses = Array.from(new Map(processedCsts.map(c => [c.course_id, c])).values());
+    // Group CSTs by level-term-department
+    const groupedByLevelTerm: Record<string, CourseSectionTeacher[]> = {};
+    for (const cst of processedCsts) {
+      const key = `${cst.course.level}-${cst.course.term}-${cst.course.departmental_type}-${cst.course.department_id || 'none'}`;
+      if (!groupedByLevelTerm[key]) groupedByLevelTerm[key] = [];
+      groupedByLevelTerm[key].push(cst);
+    }
 
-    // Find max CT count across all courses
-    const maxCtCount = Math.max(...uniqueCourses.map(c => c.course.credit >= 3 ? 3 : 2), 1);
+    // Process each level-term group separately
+    for (const levelTermKey of Object.keys(groupedByLevelTerm)) {
+      const cstForLevelTerm = groupedByLevelTerm[levelTermKey];
 
-    // For each CT number (1, 2, 3...), assign all courses to the SAME date
-    for (let ctNum = 1; ctNum <= maxCtCount; ctNum++) {
-      const cstForThisCt = processedCsts.filter(cst => {
-        const ctCount = cst.course.credit >= 3 ? 3 : 2;
-        return ctNum <= ctCount;
-      });
+      // Find max CT count for this level-term
+      const maxCtCount = Math.max(...cstForLevelTerm.map(c => c.course.credit >= 3 ? 3 : 2), 1);
 
-      // Find a date for this CT number (first valid slot that's not too close to previous CTs)
-      let selectedDate: Date | null = null;
-      let selectedSlot: typeof filteredSlots[0] | null = null;
+      // For each CT number (1, 2, 3...), assign ALL SECTIONS of this level-term to the SAME date
+      for (let ctNum = 1; ctNum <= maxCtCount; ctNum++) {
+        // Get all CSTs that have this CT number for this level-term
+        const cstForThisCt = cstForLevelTerm.filter(cst => {
+          const ctCount = cst.course.credit >= 3 ? 3 : 2;
+          return ctNum <= ctCount;
+        });
 
-      for (const slot of filteredSlots) {
-        const dateStr = slot.date instanceof Date ? slot.date.toISOString().split('T')[0] : (slot.date as string);
+        if (cstForThisCt.length === 0) continue;
 
-        if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
+        // Find a date for this CT number
+        let selectedDate: Date | null = null;
+        let selectedSlot: typeof filteredSlots[0] | null = null;
 
-        // Check if too close to other CTs of same course section
-        let isTooClose = false;
-        for (const cst of cstForThisCt) {
-          const sameCourseAssignments = assignments.filter(a => a.course_id === cst.course_id && a.section_id === cst.section_id);
-          if (sameCourseAssignments.some(a => Math.abs(a.week_number - slot.week_number) < 2)) {
-            isTooClose = true;
-            break;
-          }
-        }
-        if (isTooClose) continue;
-
-        // Check if enough rooms available for all courses' sections on this date
-        const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
-        if (availableRooms.length >= cstForThisCt.length) {
-          selectedDate = slot.date;
-          selectedSlot = slot;
-          break;
-        }
-      }
-
-      // If no date found, try without the distance constraint
-      if (!selectedDate) {
+        // Try to find slot with enough rooms
         for (const slot of filteredSlots) {
           const dateStr = slot.date instanceof Date ? slot.date.toISOString().split('T')[0] : (slot.date as string);
 
           if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
 
+          // Check if too close to other CTs of same course
+          let isTooClose = false;
+          for (const cst of cstForThisCt) {
+            const sameCourseAssignments = assignments.filter(a => a.course_id === cst.course_id && a.section_id === cst.section_id);
+            if (sameCourseAssignments.some(a => Math.abs(a.week_number - slot.week_number) < 2)) {
+              isTooClose = true;
+              break;
+            }
+          }
+          if (isTooClose) continue;
+
+          // Check if enough rooms available for all CSTs on this date
           const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
           if (availableRooms.length >= cstForThisCt.length) {
             selectedDate = slot.date;
@@ -219,19 +216,63 @@ export class CTScheduleService {
             break;
           }
         }
-      }
 
-      // Assign all courses' this CT to the selected date
-      if (selectedDate && selectedSlot) {
-        const dateStr = selectedDate instanceof Date ? selectedDate.toISOString().split('T')[0] : (selectedDate as string);
+        // If no date found with space constraint, try without it
+        if (!selectedDate) {
+          for (const slot of filteredSlots) {
+            const dateStr = slot.date instanceof Date ? slot.date.toISOString().split('T')[0] : (slot.date as string);
 
-        if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
+            if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
 
-        const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
+            // Check distance constraint
+            let isTooClose = false;
+            for (const cst of cstForThisCt) {
+              const sameCourseAssignments = assignments.filter(a => a.course_id === cst.course_id && a.section_id === cst.section_id);
+              if (sameCourseAssignments.some(a => Math.abs(a.week_number - slot.week_number) < 2)) {
+                isTooClose = true;
+                break;
+              }
+            }
+            if (isTooClose) continue;
 
-        for (const cst of cstForThisCt) {
-          if (availableRooms.length > 0) {
-            const selectedRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
+            const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
+            if (availableRooms.length >= cstForThisCt.length) {
+              selectedDate = slot.date;
+              selectedSlot = slot;
+              break;
+            }
+          }
+        }
+
+        // If still no date, just find any slot
+        if (!selectedDate) {
+          for (const slot of filteredSlots) {
+            const dateStr = slot.date instanceof Date ? slot.date.toISOString().split('T')[0] : (slot.date as string);
+            if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
+
+            selectedDate = slot.date;
+            selectedSlot = slot;
+            break;
+          }
+        }
+
+        // Assign all CSTs of this level-term this CT to the selected date
+        if (selectedDate && selectedSlot) {
+          const dateStr = selectedDate instanceof Date ? selectedDate.toISOString().split('T')[0] : (selectedDate as string);
+
+          if (!roomBookings[dateStr]) roomBookings[dateStr] = new Set();
+
+          const availableRooms = allRooms.filter(r => !roomBookings[dateStr].has(r.id));
+
+          for (const cst of cstForThisCt) {
+            let selectedRoom = null;
+            if (availableRooms.length > 0) {
+              selectedRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
+            } else {
+              // If no rooms available, pick any room (will have conflict but assignment will be made)
+              selectedRoom = allRooms[Math.floor(Math.random() * allRooms.length)];
+            }
+
             assignments.push({
               semester_id: semesterId,
               course_id: cst.course_id,
@@ -241,13 +282,10 @@ export class CTScheduleService {
               date: selectedDate,
               ct_number: ctNum,
             });
+
             roomBookings[dateStr].add(selectedRoom.id);
-            // Remove used room from available for next course
-            availableRooms.splice(availableRooms.indexOf(selectedRoom), 1);
           }
         }
-
-        ctDateMap[ctNum] = selectedDate;
       }
     }
 
