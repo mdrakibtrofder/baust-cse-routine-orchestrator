@@ -188,32 +188,14 @@ export class CTScheduleService {
       }
     }
 
-    // 4. Get rooms - filter by department and type
+    // 4. Get all rooms with department info
     const allRooms = await this.roomRepository.find({ relations: ['department'] });
 
-    // First, get CSE department ID (or the primary departmental rooms)
-    const cseRooms = allRooms.filter(r =>
-      r.room_type === 'Theory' || r.room_type === 'Both'
-    );
-
-    const availableRooms = cseRooms.length > 0 ? cseRooms : allRooms;
-
-    if (availableRooms.length === 0) {
+    if (allRooms.length === 0) {
       throw new ConflictException('No suitable rooms available for CT scheduling.');
     }
 
-    // 5. Plan assignments - distribute CTs across entire date range
-    const assignments: Partial<CTAssignment>[] = [];
-
-    // Group CSTs by level-term-department
-    const groupedByLevelTerm: Record<string, CourseSectionTeacher[]> = {};
-    for (const cst of processedCsts) {
-      const key = `${cst.course.level}-${cst.course.term}-${cst.course.departmental_type}-${cst.course.department_id || 'none'}`;
-      if (!groupedByLevelTerm[key]) groupedByLevelTerm[key] = [];
-      groupedByLevelTerm[key].push(cst);
-    }
-
-    // Group by course instead of level-term
+    // 5. Group by course
     const groupedByCourse: Record<string, CourseSectionTeacher[]> = {};
     for (const cst of processedCsts) {
       const courseId = cst.course_id;
@@ -221,111 +203,117 @@ export class CTScheduleService {
       groupedByCourse[courseId].push(cst);
     }
 
-    // Calculate spacing for distribution across semester
-    const courseIds = Object.keys(groupedByCourse);
-    const totalCourses = courseIds.length;
-    const maxCtCount = Math.max(
-      ...courseIds.map(cId =>
-        Math.max(...groupedByCourse[cId].map(c => c.course.credit >= 3 ? 3 : 2), 1)
-      ),
-      1
-    );
+    // 6. Split available slots into 3 portions for CT1, CT2, CT3
+    const slotCount = filteredSlots.length;
+    const portion1End = Math.ceil(slotCount / 3);
+    const portion2End = Math.ceil(2 * slotCount / 3);
 
-    // Calculate slot step to spread courses across semester
-    const slotStepPerCourse = Math.max(1, Math.floor(filteredSlots.length / Math.max(1, totalCourses * maxCtCount)));
-    let currentSlotIndex = 0;
+    const portion1Slots = filteredSlots.slice(0, portion1End); // CT1
+    const portion2Slots = filteredSlots.slice(portion1End, portion2End); // CT2
+    const portion3Slots = filteredSlots.slice(portion2End); // CT3
 
-    // IMPORTANT: For each COURSE, generate CT1, then CT2, then CT3
-    for (const courseId of courseIds) {
+    // 7. Collect CT1, CT2, CT3 assignments by CT number
+    const assignmentsByCtNum: Record<number, Array<{ courseId: string; courseCSTs: CourseSectionTeacher[] }>> = {
+      1: [],
+      2: [],
+      3: [],
+    };
+
+    for (const courseId of Object.keys(groupedByCourse)) {
       const courseCSTs = groupedByCourse[courseId];
-      const courseMaxCtCount = Math.max(...courseCSTs.map(c => c.course.credit >= 3 ? 3 : 2), 1);
+      const firstCst = courseCSTs[0];
+      const maxCtCount = firstCst.course.credit >= 3 ? 3 : 2;
 
-      // For this course, process CT numbers in order (CT1, then CT2, then CT3)
-      for (let ctNum = 1; ctNum <= courseMaxCtCount; ctNum++) {
-        // Get all sections of this course that have this CT number
-        const cstForThisCt = courseCSTs.filter(cst => {
-          const ctCount = cst.course.credit >= 3 ? 3 : 2;
-          return ctNum <= ctCount;
+      for (let ctNum = 1; ctNum <= maxCtCount; ctNum++) {
+        if (!assignmentsByCtNum[ctNum]) assignmentsByCtNum[ctNum] = [];
+        assignmentsByCtNum[ctNum].push({
+          courseId,
+          courseCSTs,
+        });
+      }
+    }
+
+    // 8. Assign CTs to their respective portions
+    const assignments: Partial<CTAssignment>[] = [];
+    const portionsByCtNum: Record<number, CTWeekConfig[]> = {
+      1: portion1Slots,
+      2: portion2Slots,
+      3: portion3Slots,
+    };
+
+    for (const ctNum of [1, 2, 3]) {
+      const coursesForThisCt = assignmentsByCtNum[ctNum] || [];
+      const slotsForThisCt = portionsByCtNum[ctNum] || [];
+
+      if (coursesForThisCt.length === 0 || slotsForThisCt.length === 0) continue;
+
+      // Distribute courses evenly across slots for this CT
+      const slotStepForCt = Math.max(1, Math.floor(slotsForThisCt.length / Math.max(1, coursesForThisCt.length)));
+
+      for (let i = 0; i < coursesForThisCt.length; i++) {
+        const { courseId, courseCSTs } = coursesForThisCt[i];
+        const firstCst = courseCSTs[0];
+
+        // Select slot within the designated portion for this CT
+        const slotIndex = (i * slotStepForCt) % slotsForThisCt.length;
+        const slot = slotsForThisCt[slotIndex];
+
+        const dateStr = slot.date instanceof Date
+          ? slot.date.toISOString().split('T')[0]
+          : (slot.date as string);
+
+        // Get rooms for this course's department (filter by department_id)
+        let departmentRooms = allRooms.filter(r => {
+          const isTheoryRoom = r.room_type === 'Theory' || r.room_type === 'Both';
+          if (!isTheoryRoom) return false;
+
+          if (firstCst.course.department_id) {
+            return r.department_id === firstCst.course.department_id;
+          } else {
+            // Non-departmental courses can use any theory room
+            return true;
+          }
         });
 
-        if (cstForThisCt.length === 0) continue;
-
-        // Find an appropriate slot for this CT
-        let slot = null;
-        let slotIdx = currentSlotIndex % filteredSlots.length;
-        let searchAttempts = 0;
-        const maxSearchAttempts = filteredSlots.length;
-
-        while (!slot && searchAttempts < maxSearchAttempts) {
-          const candidateSlot = filteredSlots[slotIdx];
-
-          // Check if this course section already has a CT too close to this slot
-          let canUseSlot = true;
-          for (const cst of cstForThisCt) {
-            const sameCourseCTs = assignments.filter(
-              a => a.course_id === cst.course_id && a.section_id === cst.section_id
-            );
-            if (sameCourseCTs.some(a => Math.abs(a.week_number - candidateSlot.week_number) < 2)) {
-              canUseSlot = false;
-              break;
-            }
-          }
-
-          if (canUseSlot) {
-            slot = candidateSlot;
-            break;
-          }
-
-          slotIdx = (slotIdx + 1) % filteredSlots.length;
-          searchAttempts++;
+        // Fallback to all theory rooms if department-specific rooms not available
+        if (departmentRooms.length === 0) {
+          departmentRooms = allRooms.filter(r =>
+            (r.room_type === 'Theory' || r.room_type === 'Both')
+          );
         }
 
-        // Fallback: use current slot if search fails
-        if (!slot && filteredSlots.length > 0) {
-          slot = filteredSlots[currentSlotIndex % filteredSlots.length];
-        }
+        // Find booked rooms on this date
+        const bookedRoomsOnDate = assignments
+          .filter(a => {
+            const aDate = a.date instanceof Date
+              ? a.date.toISOString().split('T')[0]
+              : (a.date as string);
+            return aDate === dateStr;
+          })
+          .map(a => a.room_id);
 
-        if (slot) {
-          const dateStr = slot.date instanceof Date
-            ? slot.date.toISOString().split('T')[0]
-            : (slot.date as string);
+        const availableRoomsOnDate = departmentRooms.filter(r => !bookedRoomsOnDate.includes(r.id));
+        const roomsToUse = availableRoomsOnDate.length > 0 ? availableRoomsOnDate : departmentRooms;
 
-          // Find available room(s) for this date
-          const bookedRoomsOnDate = assignments
-            .filter(a => {
-              const aDate = a.date instanceof Date
-                ? a.date.toISOString().split('T')[0]
-                : (a.date as string);
-              return aDate === dateStr;
-            })
-            .map(a => a.room_id);
+        // Assign all sections of this course to the same date with different rooms
+        for (let j = 0; j < courseCSTs.length; j++) {
+          const cst = courseCSTs[j];
+          const selectedRoom = roomsToUse[j % roomsToUse.length];
 
-          const availableRoomsOnDate = availableRooms.filter(r => !bookedRoomsOnDate.includes(r.id));
-          const roomsToUse = availableRoomsOnDate.length > 0 ? availableRoomsOnDate : availableRooms;
-
-          // Assign all sections of this course to this date with different rooms
-          for (let i = 0; i < cstForThisCt.length; i++) {
-            const cst = cstForThisCt[i];
-            const selectedRoom = roomsToUse[i % roomsToUse.length];
-
-            assignments.push({
-              semester_id: semesterId,
-              course_id: cst.course_id,
-              section_id: cst.section_id,
-              room_id: selectedRoom.id,
-              week_number: slot.week_number,
-              date: slot.date,
-              ct_number: ctNum,
-            });
-          }
-
-          // Move index forward for next CT of this course
-          currentSlotIndex = (currentSlotIndex + slotStepPerCourse) % filteredSlots.length;
+          assignments.push({
+            semester_id: semesterId,
+            course_id: cst.course_id,
+            section_id: cst.section_id,
+            room_id: selectedRoom.id,
+            week_number: slot.week_number,
+            date: slot.date,
+            ct_number: ctNum,
+          });
         }
       }
     }
 
-    // 7. Save assignments
+    // 9. Save assignments
     await this.ctAssignmentRepository.save(this.ctAssignmentRepository.create(assignments));
 
     return this.getAssignments(semesterId);
