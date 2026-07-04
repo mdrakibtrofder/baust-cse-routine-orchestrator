@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Not } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ClassSlot } from '../../entities/class-slot.entity';
 import { Course } from '../../entities/course.entity';
 import { Section } from '../../entities/section.entity';
 import { Room } from '../../entities/room.entity';
-import { Teacher } from '../../entities/teacher.entity';
 import { Period } from '../../entities/period.entity';
 import { Day } from '../../entities/day.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
+import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
 
@@ -39,10 +39,47 @@ export interface GeneratorProgress {
   };
 }
 
+/** One class meeting to place: either a regular section slot (section_id set)
+ *  or a lab-section slot (lab_section_id set, section_id null, shared by every
+ *  section in coveredSectionIds). */
+interface PlacementTarget {
+  courseId: string;
+  courseCode: string;
+  courseType: string;
+  sectionId: string | null;
+  labSectionId: string | null;
+  coveredSectionIds: string[];
+  totalStudents: number;
+  deptType: 'Departmental' | 'Non-Departmental';
+  teacherIds: string[];
+  primaryRoomId: string | null;
+  label: string;
+}
+
+interface PlacementUnit {
+  target: PlacementTarget;
+  slotsNeeded: number;
+  /** Per-slot teacher override for split-teacher sessional_3.0 courses */
+  slotTeacherIds?: string[][] | null;
+}
+
 interface FailedPlacement {
-  assignment: CourseSectionTeacher;
-  slotTeacherIds?: string[];
+  target: PlacementTarget;
   assignedDays: string[];
+}
+
+interface SchedulingContext {
+  semesterId: string;
+  days: Day[];
+  periods: Period[];
+  rooms: Room[];
+  teacherUnavail: TeacherUnavailability[];
+  roomUnavail: RoomUnavailability[];
+  /** `${course_id}:${section_id}` -> assignment, for resolving teachers of placed slots */
+  cstByKey: Map<string, CourseSectionTeacher>;
+  labSectionsById: Map<string, CourseLabSection>;
+  sectionsById: Map<string, Section>;
+  coursesById: Map<string, Course>;
 }
 
 @Injectable()
@@ -75,6 +112,8 @@ export class RoutineGeneratorService {
     private readonly dayRepository: Repository<Day>,
     @InjectRepository(CourseSectionTeacher)
     private readonly cstRepository: Repository<CourseSectionTeacher>,
+    @InjectRepository(CourseLabSection)
+    private readonly labSectionRepository: Repository<CourseLabSection>,
     @InjectRepository(TeacherUnavailability)
     private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
     @InjectRepository(RoomUnavailability)
@@ -147,9 +186,22 @@ export class RoutineGeneratorService {
     this.logger.log(message);
   }
 
+  private async waitWhilePaused() {
+    while (this.pauseFlag && !this.stopFlag) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
+  private slotsNeededFor(courseType: string, credit: number): number {
+    if (courseType.includes('sessional')) {
+      return courseType === 'sessional_3.0' ? 2 : 1;
+    }
+    return Math.ceil(credit);
+  }
+
   private async runGeneration(semesterId: string, resolveConflicts: boolean) {
     const backupSlots = await this.classSlotRepository.find({ where: { semester_id: semesterId } });
-    
+
     try {
       // 1. Clear existing slots for the semester
       await this.classSlotRepository.delete({ semester_id: semesterId });
@@ -160,89 +212,150 @@ export class RoutineGeneratorService {
         where: { semester_id: semesterId },
         relations: ['course', 'section'],
       });
+      const labSections = await this.labSectionRepository.find({
+        where: { semester_id: semesterId },
+        relations: ['course'],
+      });
 
       const days = await this.dayRepository.find();
       const periods = await this.periodRepository.find({
         order: { start: 'ASC' }
       });
       const rooms = await this.roomRepository.find();
+      const allSections = await this.sectionRepository.find();
       const teacherUnavail = await this.teacherUnavailabilityRepository.find();
       const roomUnavail = await this.roomUnavailabilityRepository.find();
 
-      // 3. Calculate total slots
-      let total = 0;
-      for (const a of assignments) {
-        if (a.course.course_type.includes('theory')) {
-          total += Math.ceil(a.course.credit);
-        } else {
-          total += a.course.course_type === 'sessional_3.0' ? 2 : 1;
-        }
-      }
-      this.progress.totalSlots = total;
+      const ctx: SchedulingContext = {
+        semesterId,
+        days,
+        periods,
+        rooms,
+        teacherUnavail,
+        roomUnavail,
+        cstByKey: new Map(assignments.map(a => [`${a.course_id}:${a.section_id}`, a])),
+        labSectionsById: new Map(labSections.map(l => [l.id, l])),
+        sectionsById: new Map(allSections.map(s => [s.id, s])),
+        coursesById: new Map([
+          ...assignments.map(a => [a.course_id, a.course] as const),
+          ...labSections.map(l => [l.course_id, l.course] as const),
+        ]),
+      };
 
-      // 4. Sort assignments: Sessionals first as they are harder to place
-      assignments.sort((a, b) => {
-        const typeA = a.course.course_type.includes('sessional') ? 0 : 1;
-        const typeB = b.course.course_type.includes('sessional') ? 0 : 1;
-        return typeA - typeB;
+      // Sections covered by a lab section, per course: those course-section
+      // assignments are scheduled through their lab sections instead
+      const labCoveredSections = new Map<string, Set<string>>();
+      for (const l of labSections) {
+        const set = labCoveredSections.get(l.course_id) ?? new Set<string>();
+        l.section_ids.forEach(id => set.add(id));
+        labCoveredSections.set(l.course_id, set);
+      }
+
+      // 3. Build placement units
+      const units: PlacementUnit[] = [];
+
+      for (const l of labSections) {
+        if (!l.course.course_type.includes('sessional')) {
+          this.addLog(`SKIPPING lab section ${l.course.code}-${l.label}: course is not sessional.`);
+          continue;
+        }
+        const mappedSections = l.section_ids
+          .map(id => ctx.sectionsById.get(id))
+          .filter((s): s is Section => !!s);
+        units.push({
+          target: {
+            courseId: l.course_id,
+            courseCode: l.course.code,
+            courseType: l.course.course_type,
+            sectionId: null,
+            labSectionId: l.id,
+            coveredSectionIds: l.section_ids,
+            totalStudents: mappedSections.reduce((sum, s) => sum + s.total_students, 0),
+            deptType: mappedSections[0]?.departmental_type ?? 'Departmental',
+            teacherIds: l.teacher_ids ?? [],
+            primaryRoomId: l.primary_room_id,
+            label: `${l.course.code} (Lab Sec ${l.label})`,
+          },
+          slotsNeeded: this.slotsNeededFor(l.course.course_type, l.course.credit),
+        });
+      }
+
+      for (const a of assignments) {
+        const isSessional = a.course.course_type.includes('sessional');
+        if (isSessional && labCoveredSections.get(a.course_id)?.has(a.section_id)) {
+          continue; // scheduled via its lab sections
+        }
+        const isSplit = a.course.course_type === 'sessional_3.0' &&
+          Array.isArray(a.slot_teacher_ids) &&
+          a.slot_teacher_ids.length > 0;
+        units.push({
+          target: {
+            courseId: a.course_id,
+            courseCode: a.course.code,
+            courseType: a.course.course_type,
+            sectionId: a.section_id,
+            labSectionId: null,
+            coveredSectionIds: [a.section_id],
+            totalStudents: a.section.total_students,
+            deptType: a.section.departmental_type,
+            teacherIds: a.teacher_ids ?? [],
+            primaryRoomId: a.primary_room_id,
+            label: `${a.course.code} (L${a.section.level} T${a.section.term} Sec ${a.section.name})`,
+          },
+          slotsNeeded: this.slotsNeededFor(a.course.course_type, a.course.credit),
+          slotTeacherIds: isSplit ? a.slot_teacher_ids : null,
+        });
+      }
+
+      // 4. Sort: lab sections first, then other sessionals, then theory —
+      // hardest-to-place go first
+      units.sort((a, b) => {
+        const rank = (u: PlacementUnit) =>
+          u.target.labSectionId ? 0 : u.target.courseType.includes('sessional') ? 1 : 2;
+        return rank(a) - rank(b);
       });
+
+      const total = units.reduce((sum, u) => sum + u.slotsNeeded, 0);
+      this.progress.totalSlots = total;
 
       // 5. Iterate and generate
       const failedPlacements: FailedPlacement[] = [];
-      for (const assignment of assignments) {
+      for (const unit of units) {
         if (this.stopFlag) break;
 
-        const isSessional = assignment.course.course_type.includes('sessional');
-        
+        const target = unit.target;
+        const isSessional = target.courseType.includes('sessional');
+
         // Sessional requirement: at least one teacher assigned
-        if (isSessional && (!assignment.teacher_ids || assignment.teacher_ids.length === 0)) {
-          this.addLog(`SKIPPING ${assignment.course.code}: Sessional course must have at least one teacher assigned.`);
-          this.progress.failedSlots += 1;
-          this.conflictsEncountered.push(`${assignment.course.code}: No teacher assigned`);
+        if (isSessional && target.teacherIds.length === 0) {
+          this.addLog(`SKIPPING ${target.label}: Sessional course must have at least one teacher assigned.`);
+          this.progress.failedSlots += unit.slotsNeeded;
+          this.conflictsEncountered.push(`${target.label}: No teacher assigned`);
           continue;
         }
 
-        const slotsNeeded = isSessional
-          ? assignment.course.course_type === 'sessional_3.0' ? 2 : 1
-          : Math.ceil(assignment.course.credit);
         const assignedDays: string[] = [];
 
-        const isSplit = assignment.course.course_type === 'sessional_3.0' &&
-          Array.isArray(assignment.slot_teacher_ids) &&
-          assignment.slot_teacher_ids.length > 0;
-
-        for (let i = 0; i < slotsNeeded; i++) {
-          while (this.pauseFlag && !this.stopFlag) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
+        for (let i = 0; i < unit.slotsNeeded; i++) {
+          await this.waitWhilePaused();
           if (this.stopFlag) break;
 
           // For split-teacher sessional_3.0, use per-slot teacher for conflict checking
-          const slotTeacherIds = isSplit
-            ? (assignment.slot_teacher_ids[i] ?? assignment.teacher_ids)
-            : assignment.teacher_ids;
+          const slotTarget: PlacementTarget = {
+            ...target,
+            teacherIds: unit.slotTeacherIds?.[i] ?? target.teacherIds,
+          };
 
-          const success = await this.generateSlot(
-            semesterId,
-            assignment,
-            assignedDays,
-            days,
-            periods,
-            rooms,
-            teacherUnavail,
-            roomUnavail,
-            slotTeacherIds
-          );
+          const success = await this.generateSlot(ctx, slotTarget, assignedDays);
 
           if (success) {
             this.progress.generatedSlots++;
-            const courseInfo = `${assignment.course.code} (L${assignment.section.level} T${assignment.section.term} Sec ${assignment.section.name})`;
-            this.addLog(`Slot ${i + 1}/${slotsNeeded} for ${courseInfo} assigned successfully.`);
+            this.addLog(`Slot ${i + 1}/${unit.slotsNeeded} for ${target.label} assigned successfully.`);
           } else {
             this.progress.failedSlots++;
-            this.addLog(`FAILED to assign slot ${i + 1}/${slotsNeeded} for ${assignment.course.code}. No available combination found.`);
-            this.conflictsEncountered.push(`${assignment.course.code}: No available time/room slot`);
-            failedPlacements.push({ assignment, slotTeacherIds, assignedDays });
+            this.addLog(`FAILED to assign slot ${i + 1}/${unit.slotsNeeded} for ${target.label}. No available combination found.`);
+            this.conflictsEncountered.push(`${target.label}: No available time/room slot`);
+            failedPlacements.push({ target: slotTarget, assignedDays });
           }
         }
       }
@@ -250,15 +363,7 @@ export class RoutineGeneratorService {
       // 6. Optional second pass: try to resolve room/time conflicts left by the first pass
       let resolvedCount = 0;
       if (!this.stopFlag && resolveConflicts && failedPlacements.length > 0) {
-        resolvedCount = await this.runConflictResolution(
-          semesterId,
-          failedPlacements,
-          days,
-          periods,
-          rooms,
-          teacherUnavail,
-          roomUnavail,
-        );
+        resolvedCount = await this.runConflictResolution(ctx, failedPlacements);
       }
 
       if (this.stopFlag) {
@@ -286,7 +391,7 @@ export class RoutineGeneratorService {
       this.addLog('Rollback: Restoring previous slots due to error.');
       await this.classSlotRepository.delete({ semester_id: semesterId });
       await this.classSlotRepository.save(backupSlots);
-      
+
       this.progress.status = GeneratorStatus.FAILED;
       this.addLog(`Generation failed: ${err}`);
       throw err;
@@ -294,24 +399,16 @@ export class RoutineGeneratorService {
   }
 
   private async generateSlot(
-    semesterId: string,
-    assignment: CourseSectionTeacher,
+    ctx: SchedulingContext,
+    target: PlacementTarget,
     assignedDays: string[],
-    days: Day[],
-    periods: Period[],
-    rooms: Room[],
-    teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[],
-    slotTeacherIds?: string[]
   ): Promise<boolean> {
-    const isSessional = assignment.course.course_type.includes('sessional');
-    const effectiveTeacherIds = slotTeacherIds ?? assignment.teacher_ids;
+    const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
-    const sectionDeptType = assignment.section.departmental_type;
 
     // Shuffle days and periods to avoid always picking the first one
-    const shuffledDays = [...days].sort(() => Math.random() - 0.5);
-    const shuffledPeriods = [...periods].sort(() => Math.random() - 0.5);
+    const shuffledDays = [...ctx.days].sort(() => Math.random() - 0.5);
+    const shuffledPeriods = [...ctx.periods].sort(() => Math.random() - 0.5);
 
     for (const day of shuffledDays) {
       // Constraint: multiple classes of same course must be on different days
@@ -324,42 +421,33 @@ export class RoutineGeneratorService {
         // Theory courses use theory periods, sessional courses use sessional periods
         if (period.kind !== requiredKind) continue;
 
-        // Preferred room check
-        const candidateRooms: Room[] = [];
-        if (assignment.primary_room_id) {
-          const primaryRoom = rooms.find(r => r.id === assignment.primary_room_id);
-          if (primaryRoom) candidateRooms.push(primaryRoom);
+        if (await this.hasSectionOrTeacherConflict(ctx, day.name, period, target.coveredSectionIds, target.teacherIds)) {
+          continue;
         }
 
-        // Add other rooms that match type (or are usable for both) and capacity,
-        // preferring rooms whose departmental type matches the section's
-        candidateRooms.push(...rooms.filter(r =>
-          r.id !== assignment.primary_room_id &&
-          this.roomFits(r, assignment.course.course_type, assignment.section.total_students)
+        // Preferred room first, then rooms matching type/capacity, preferring
+        // rooms whose departmental type matches the section's
+        const candidateRooms: Room[] = [];
+        if (target.primaryRoomId) {
+          const primaryRoom = ctx.rooms.find(r => r.id === target.primaryRoomId);
+          if (primaryRoom) candidateRooms.push(primaryRoom);
+        }
+        candidateRooms.push(...ctx.rooms.filter(r =>
+          r.id !== target.primaryRoomId &&
+          this.roomFits(r, target.courseType, target.totalStudents)
         )
           .sort(() => Math.random() - 0.5)
           .sort((a, b) =>
-            (a.departmental_type === sectionDeptType ? 0 : 1) -
-            (b.departmental_type === sectionDeptType ? 0 : 1)
+            (a.departmental_type === target.deptType ? 0 : 1) -
+            (b.departmental_type === target.deptType ? 0 : 1)
           ));
 
         for (const room of candidateRooms) {
-          const hasConflicts = await this.checkConflicts(
-            semesterId,
-            day.name,
-            period,
-            room,
-            assignment,
-            teacherUnavail,
-            roomUnavail,
-            effectiveTeacherIds
-          );
+          if (await this.hasRoomConflict(ctx, day.name, period, room)) continue;
 
-          if (!hasConflicts) {
-            await this.saveSlot(semesterId, assignment, room, day.name, period);
-            assignedDays.push(day.name);
-            return true;
-          }
+          await this.saveSlot(ctx.semesterId, target, room, day.name, period);
+          assignedDays.push(day.name);
+          return true;
         }
       }
     }
@@ -367,41 +455,38 @@ export class RoutineGeneratorService {
     return false;
   }
 
-  private async checkConflicts(
-    semesterId: string,
-    day: string,
-    period: Period,
-    room: Room,
-    assignment: CourseSectionTeacher,
-    teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[],
-    overrideTeacherIds?: string[]
-  ): Promise<boolean> {
-    if (await this.hasRoomConflict(semesterId, day, period, room, roomUnavail)) return true;
-    return this.hasSectionOrTeacherConflict(semesterId, day, period, assignment, teacherUnavail, overrideTeacherIds);
+  /** Sections whose students are occupied by this slot (lab slots cover every mapped section) */
+  private coveredSectionIdsOf(slot: ClassSlot, ctx: SchedulingContext): string[] {
+    if (slot.lab_section_id) {
+      return ctx.labSectionsById.get(slot.lab_section_id)?.section_ids ?? [];
+    }
+    return slot.section_id ? [slot.section_id] : [];
+  }
+
+  private teacherIdsOf(slot: ClassSlot, ctx: SchedulingContext): string[] {
+    if (slot.lab_section_id) {
+      return ctx.labSectionsById.get(slot.lab_section_id)?.teacher_ids ?? [];
+    }
+    if (!slot.section_id) return [];
+    return ctx.cstByKey.get(`${slot.course_id}:${slot.section_id}`)?.teacher_ids ?? [];
   }
 
   private async hasRoomConflict(
-    semesterId: string,
+    ctx: SchedulingContext,
     day: string,
     period: Pick<Period, 'start' | 'end'>,
     room: Room,
-    roomUnavail: RoomUnavailability[],
   ): Promise<boolean> {
-    // Room conflict (already assigned)
-    const roomConflict = await this.classSlotRepository.findOne({
-      where: {
-        semester_id: semesterId,
-        day: day,
-        room_id: room.id,
-        start: period.start,
-        end: period.end,
-      }
+    // Room conflict (already assigned, any overlapping time)
+    const roomSlots = await this.classSlotRepository.find({
+      where: { semester_id: ctx.semesterId, day, room_id: room.id },
     });
-    if (roomConflict) return true;
+    if (roomSlots.some(s => this.timesOverlap(s.start, s.end, period.start, period.end))) {
+      return true;
+    }
 
     // Room unavailability
-    const roomUn = roomUnavail.find(u =>
+    const roomUn = ctx.roomUnavail.find(u =>
       u.room_id === room.id &&
       u.days.includes(day) &&
       this.timesOverlap(u.start, u.end, period.start, period.end)
@@ -410,47 +495,36 @@ export class RoutineGeneratorService {
   }
 
   private async hasSectionOrTeacherConflict(
-    semesterId: string,
+    ctx: SchedulingContext,
     day: string,
     period: Pick<Period, 'start' | 'end'>,
-    assignment: CourseSectionTeacher,
-    teacherUnavail: TeacherUnavailability[],
-    overrideTeacherIds?: string[]
+    sectionIds: string[],
+    teacherIds: string[],
   ): Promise<boolean> {
-    // Section conflict
-    const sectionConflict = await this.classSlotRepository.findOne({
-      where: {
-        semester_id: semesterId,
-        day: day,
-        section_id: assignment.section_id,
-        start: period.start,
-        end: period.end,
-      }
-    });
-    if (sectionConflict) return true;
-
-    // Teacher conflict
-    const teacherIdsToCheck = overrideTeacherIds ?? assignment.teacher_ids;
-    for (const teacherId of teacherIdsToCheck) {
-      // Check if teacher assigned to another class
-      const teacherSlots = await this.classSlotRepository.createQueryBuilder('slot')
-        .innerJoin(CourseSectionTeacher, 'cst', 'cst.course_id = slot.course_id AND cst.section_id = slot.section_id AND cst.semester_id = slot.semester_id')
-        .where('slot.semester_id = :semesterId', { semesterId })
-        .andWhere('slot.day = :day', { day })
-        .andWhere('slot.start = :start', { start: period.start })
-        .andWhere('slot.end = :end', { end: period.end })
-        .andWhere(':teacherId = ANY(cst.teacher_ids)', { teacherId })
-        .getOne();
-
-      if (teacherSlots) return true;
-
-      // Check teacher unavailability
-      const tUn = teacherUnavail.find(u =>
+    // Teacher unavailability
+    for (const teacherId of teacherIds) {
+      const tUn = ctx.teacherUnavail.find(u =>
         u.teacher_id === teacherId &&
         u.day === day &&
         this.timesOverlap(u.start, u.end, period.start, period.end)
       );
       if (tUn) return true;
+    }
+
+    // Section / teacher double-booking against every overlapping slot that day,
+    // including lab-section slots (which occupy all their mapped sections)
+    const daySlots = await this.classSlotRepository.find({
+      where: { semester_id: ctx.semesterId, day },
+    });
+
+    for (const slot of daySlots) {
+      if (!this.timesOverlap(slot.start, slot.end, period.start, period.end)) continue;
+
+      const slotSections = this.coveredSectionIdsOf(slot, ctx);
+      if (slotSections.some(id => sectionIds.includes(id))) return true;
+
+      const slotTeachers = this.teacherIdsOf(slot, ctx);
+      if (slotTeachers.some(id => teacherIds.includes(id))) return true;
     }
 
     return false;
@@ -464,15 +538,16 @@ export class RoutineGeneratorService {
 
   private async saveSlot(
     semesterId: string,
-    assignment: CourseSectionTeacher,
+    target: PlacementTarget,
     room: Room,
     day: string,
     period: Pick<Period, 'start' | 'end'>,
   ): Promise<void> {
     await this.classSlotRepository.save({
       semester_id: semesterId,
-      course_id: assignment.course_id,
-      section_id: assignment.section_id,
+      course_id: target.courseId,
+      section_id: target.sectionId,
+      lab_section_id: target.labSectionId,
       room_id: room.id,
       day,
       start: period.start,
@@ -482,45 +557,27 @@ export class RoutineGeneratorService {
   }
 
   private async runConflictResolution(
-    semesterId: string,
+    ctx: SchedulingContext,
     failures: FailedPlacement[],
-    days: Day[],
-    periods: Period[],
-    rooms: Room[],
-    teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[],
   ): Promise<number> {
     this.addLog(`--- Conflict resolution: retrying ${failures.length} unplaced slot(s) ---`);
     let resolved = 0;
 
     for (const failure of failures) {
-      while (this.pauseFlag && !this.stopFlag) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      await this.waitWhilePaused();
       if (this.stopFlag) break;
 
-      const { assignment } = failure;
-      const courseInfo = `${assignment.course.code} (L${assignment.section.level} T${assignment.section.term} Sec ${assignment.section.name})`;
-
-      const success = await this.resolveFailedSlot(
-        semesterId,
-        failure,
-        days,
-        periods,
-        rooms,
-        teacherUnavail,
-        roomUnavail,
-      );
+      const success = await this.resolveFailedSlot(ctx, failure);
 
       if (success) {
         resolved++;
         this.progress.generatedSlots++;
         this.progress.failedSlots--;
-        const idx = this.conflictsEncountered.indexOf(`${assignment.course.code}: No available time/room slot`);
+        const idx = this.conflictsEncountered.indexOf(`${failure.target.label}: No available time/room slot`);
         if (idx !== -1) this.conflictsEncountered.splice(idx, 1);
-        this.addLog(`RESOLVED: ${courseInfo} placed successfully during conflict resolution.`);
+        this.addLog(`RESOLVED: ${failure.target.label} placed successfully during conflict resolution.`);
       } else {
-        this.addLog(`UNRESOLVED: ${courseInfo} still has no valid time/room combination.`);
+        this.addLog(`UNRESOLVED: ${failure.target.label} still has no valid time/room combination.`);
       }
     }
 
@@ -529,33 +586,26 @@ export class RoutineGeneratorService {
   }
 
   private async resolveFailedSlot(
-    semesterId: string,
+    ctx: SchedulingContext,
     failure: FailedPlacement,
-    days: Day[],
-    periods: Period[],
-    rooms: Room[],
-    teacherUnavail: TeacherUnavailability[],
-    roomUnavail: RoomUnavailability[],
   ): Promise<boolean> {
-    const { assignment, slotTeacherIds, assignedDays } = failure;
-    const isSessional = assignment.course.course_type.includes('sessional');
+    const { target, assignedDays } = failure;
+    const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
-    const sectionDeptType = assignment.section.departmental_type;
 
-    const fits = (r: Room) =>
-      this.roomFits(r, assignment.course.course_type, assignment.section.total_students);
+    const fits = (r: Room) => this.roomFits(r, target.courseType, target.totalStudents);
 
     // Departmental sections get departmental rooms and vice versa;
     // rooms of the other departmental type are only a last resort
-    const matchedRooms = rooms
-      .filter(r => fits(r) && r.departmental_type === sectionDeptType)
+    const matchedRooms = ctx.rooms
+      .filter(r => fits(r) && r.departmental_type === target.deptType)
       .sort(() => Math.random() - 0.5);
-    const fallbackRooms = rooms
-      .filter(r => fits(r) && r.departmental_type !== sectionDeptType)
+    const fallbackRooms = ctx.rooms
+      .filter(r => fits(r) && r.departmental_type !== target.deptType)
       .sort(() => Math.random() - 0.5);
 
-    const shuffledDays = [...days].sort(() => Math.random() - 0.5);
-    const candidatePeriods = periods
+    const shuffledDays = [...ctx.days].sort(() => Math.random() - 0.5);
+    const candidatePeriods = ctx.periods
       .filter(p => !p.is_break && !p.name.toLowerCase().includes('break') && p.kind === requiredKind)
       .sort(() => Math.random() - 0.5);
 
@@ -565,13 +615,13 @@ export class RoutineGeneratorService {
         if (assignedDays.includes(day.name)) continue;
 
         for (const period of candidatePeriods) {
-          if (await this.hasSectionOrTeacherConflict(semesterId, day.name, period, assignment, teacherUnavail, slotTeacherIds)) {
+          if (await this.hasSectionOrTeacherConflict(ctx, day.name, period, target.coveredSectionIds, target.teacherIds)) {
             continue;
           }
 
           for (const room of roomPool) {
-            if (await this.hasRoomConflict(semesterId, day.name, period, room, roomUnavail)) continue;
-            await this.saveSlot(semesterId, assignment, room, day.name, period);
+            if (await this.hasRoomConflict(ctx, day.name, period, room)) continue;
+            await this.saveSlot(ctx.semesterId, target, room, day.name, period);
             assignedDays.push(day.name);
             return true;
           }
@@ -584,33 +634,31 @@ export class RoutineGeneratorService {
       if (assignedDays.includes(day.name)) continue;
 
       for (const period of candidatePeriods) {
-        if (await this.hasSectionOrTeacherConflict(semesterId, day.name, period, assignment, teacherUnavail, slotTeacherIds)) {
+        if (await this.hasSectionOrTeacherConflict(ctx, day.name, period, target.coveredSectionIds, target.teacherIds)) {
           continue;
         }
 
         for (const room of [...matchedRooms, ...fallbackRooms]) {
           // Only rooms blocked by another class can be freed, not declared-unavailable ones
-          const roomUn = roomUnavail.find(u =>
+          const roomUn = ctx.roomUnavail.find(u =>
             u.room_id === room.id &&
             u.days.includes(day.name) &&
             this.timesOverlap(u.start, u.end, period.start, period.end)
           );
           if (roomUn) continue;
 
-          const occupant = await this.classSlotRepository.findOne({
-            where: {
-              semester_id: semesterId,
-              day: day.name,
-              room_id: room.id,
-              start: period.start,
-              end: period.end,
-            }
+          const roomSlots = await this.classSlotRepository.find({
+            where: { semester_id: ctx.semesterId, day: day.name, room_id: room.id },
           });
-          if (!occupant) continue;
+          const occupants = roomSlots.filter(s =>
+            this.timesOverlap(s.start, s.end, period.start, period.end)
+          );
+          // Only handle the single-blocker case to keep relocation safe
+          if (occupants.length !== 1) continue;
 
-          const moved = await this.tryRelocateSlot(semesterId, occupant, rooms, roomUnavail);
+          const moved = await this.tryRelocateSlot(ctx, occupants[0]);
           if (moved) {
-            await this.saveSlot(semesterId, assignment, room, day.name, period);
+            await this.saveSlot(ctx.semesterId, target, room, day.name, period);
             assignedDays.push(day.name);
             return true;
           }
@@ -621,35 +669,46 @@ export class RoutineGeneratorService {
     return false;
   }
 
-  /** Move an existing slot to a different room at the same day/time, keeping
-   *  section/teacher constraints intact since the time does not change. */
+  /** Move an existing slot (regular or lab-section) to a different room at the
+   *  same day/time, keeping section/teacher constraints intact since the time
+   *  does not change. */
   private async tryRelocateSlot(
-    semesterId: string,
+    ctx: SchedulingContext,
     occupant: ClassSlot,
-    rooms: Room[],
-    roomUnavail: RoomUnavailability[],
   ): Promise<boolean> {
-    // Lab-section slots are managed elsewhere; never move them
-    if (!occupant.section_id) return false;
+    const course = ctx.coursesById.get(occupant.course_id);
+    if (!course) return false;
 
-    const occupantCst = await this.cstRepository.findOne({
-      where: {
-        semester_id: semesterId,
-        course_id: occupant.course_id,
-        section_id: occupant.section_id,
-      },
-      relations: ['course', 'section'],
-    });
-    if (!occupantCst) return false;
+    let totalStudents: number;
+    let deptType: 'Departmental' | 'Non-Departmental';
+    let primaryRoomId: string | null;
+
+    if (occupant.lab_section_id) {
+      const lab = ctx.labSectionsById.get(occupant.lab_section_id);
+      if (!lab) return false;
+      const mappedSections = lab.section_ids
+        .map(id => ctx.sectionsById.get(id))
+        .filter((s): s is Section => !!s);
+      totalStudents = mappedSections.reduce((sum, s) => sum + s.total_students, 0);
+      deptType = mappedSections[0]?.departmental_type ?? 'Departmental';
+      primaryRoomId = lab.primary_room_id;
+    } else if (occupant.section_id) {
+      const cst = ctx.cstByKey.get(`${occupant.course_id}:${occupant.section_id}`);
+      if (!cst) return false;
+      totalStudents = cst.section.total_students;
+      deptType = cst.section.departmental_type;
+      primaryRoomId = cst.primary_room_id;
+    } else {
+      return false;
+    }
 
     // Don't evict a class from its preferred room
-    if (occupantCst.primary_room_id && occupantCst.primary_room_id === occupant.room_id) return false;
+    if (primaryRoomId && primaryRoomId === occupant.room_id) return false;
 
-    const deptType = occupantCst.section.departmental_type;
-    const candidates = rooms
+    const candidates = ctx.rooms
       .filter(r =>
         r.id !== occupant.room_id &&
-        this.roomFits(r, occupantCst.course.course_type, occupantCst.section.total_students)
+        this.roomFits(r, course.course_type, totalStudents)
       )
       .sort(() => Math.random() - 0.5)
       .sort((a, b) =>
@@ -659,10 +718,10 @@ export class RoutineGeneratorService {
 
     for (const newRoom of candidates) {
       const period = { start: occupant.start, end: occupant.end };
-      if (await this.hasRoomConflict(semesterId, occupant.day, period, newRoom, roomUnavail)) continue;
+      if (await this.hasRoomConflict(ctx, occupant.day, period, newRoom)) continue;
 
       await this.classSlotRepository.update(occupant.id, { room_id: newRoom.id });
-      this.addLog(`Relocated ${occupantCst.course.code} (${occupant.day} ${occupant.start}) to room ${newRoom.name} to free a slot.`);
+      this.addLog(`Relocated ${course.code} (${occupant.day} ${occupant.start}) to room ${newRoom.name} to free a slot.`);
       return true;
     }
 
