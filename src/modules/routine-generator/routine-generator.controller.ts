@@ -11,8 +11,11 @@ export class RoutineGeneratorController {
   }
 
   @Post('start')
-  async start(@Body('semester_id') semesterId: string) {
-    await this.generatorService.start(semesterId);
+  async start(
+    @Body('semester_id') semesterId: string,
+    @Body('resolve_conflicts') resolveConflicts?: boolean,
+  ) {
+    await this.generatorService.start(semesterId, resolveConflicts !== false);
     return { success: true, message: 'Generation started' };
   }
 

@@ -34,8 +34,15 @@ export interface GeneratorProgress {
     totalAttempted: number;
     successful: number;
     failed: number;
+    resolved: number;
     conflictsEncountered: string[];
   };
+}
+
+interface FailedPlacement {
+  assignment: CourseSectionTeacher;
+  slotTeacherIds?: string[];
+  assignedDays: string[];
 }
 
 @Injectable()
@@ -78,7 +85,7 @@ export class RoutineGeneratorService {
     return this.progress;
   }
 
-  async start(semesterId: string) {
+  async start(semesterId: string, resolveConflicts = true) {
     if (this.progress.status === GeneratorStatus.RUNNING) {
       return;
     }
@@ -89,7 +96,7 @@ export class RoutineGeneratorService {
     this.addLog('Starting routine generation...');
 
     // Run in background
-    this.runGeneration(semesterId).catch((err) => {
+    this.runGeneration(semesterId, resolveConflicts).catch((err) => {
       this.logger.error('Generation failed', err);
       this.progress.status = GeneratorStatus.FAILED;
       this.addLog(`CRITICAL ERROR: ${err.message}`);
@@ -140,7 +147,7 @@ export class RoutineGeneratorService {
     this.logger.log(message);
   }
 
-  private async runGeneration(semesterId: string) {
+  private async runGeneration(semesterId: string, resolveConflicts: boolean) {
     const backupSlots = await this.classSlotRepository.find({ where: { semester_id: semesterId } });
     
     try {
@@ -181,6 +188,7 @@ export class RoutineGeneratorService {
       });
 
       // 5. Iterate and generate
+      const failedPlacements: FailedPlacement[] = [];
       for (const assignment of assignments) {
         if (this.stopFlag) break;
 
@@ -234,8 +242,23 @@ export class RoutineGeneratorService {
             this.progress.failedSlots++;
             this.addLog(`FAILED to assign slot ${i + 1}/${slotsNeeded} for ${assignment.course.code}. No available combination found.`);
             this.conflictsEncountered.push(`${assignment.course.code}: No available time/room slot`);
+            failedPlacements.push({ assignment, slotTeacherIds, assignedDays });
           }
         }
+      }
+
+      // 6. Optional second pass: try to resolve room/time conflicts left by the first pass
+      let resolvedCount = 0;
+      if (!this.stopFlag && resolveConflicts && failedPlacements.length > 0) {
+        resolvedCount = await this.runConflictResolution(
+          semesterId,
+          failedPlacements,
+          days,
+          periods,
+          rooms,
+          teacherUnavail,
+          roomUnavail,
+        );
       }
 
       if (this.stopFlag) {
@@ -246,13 +269,14 @@ export class RoutineGeneratorService {
       } else {
         this.progress.status = GeneratorStatus.COMPLETED;
         this.progress.endTime = new Date();
-        
+
         const successRate = total > 0 ? (this.progress.generatedSlots / total) * 100 : 0;
         this.progress.report = {
           successRate,
           totalAttempted: total,
           successful: this.progress.generatedSlots,
           failed: this.progress.failedSlots,
+          resolved: resolvedCount,
           conflictsEncountered: this.conflictsEncountered,
         };
         this.addLog(`Routine generation completed. Success rate: ${successRate.toFixed(2)}%`);
@@ -282,7 +306,9 @@ export class RoutineGeneratorService {
   ): Promise<boolean> {
     const isSessional = assignment.course.course_type.includes('sessional');
     const effectiveTeacherIds = slotTeacherIds ?? assignment.teacher_ids;
-    
+    const requiredKind = isSessional ? 'sessional' : 'theory';
+    const sectionDeptType = assignment.section.departmental_type;
+
     // Shuffle days and periods to avoid always picking the first one
     const shuffledDays = [...days].sort(() => Math.random() - 0.5);
     const shuffledPeriods = [...periods].sort(() => Math.random() - 0.5);
@@ -293,24 +319,29 @@ export class RoutineGeneratorService {
 
       for (const period of shuffledPeriods) {
         // Skip break periods
-        if (period.name.toLowerCase().includes('break')) continue;
+        if (period.is_break || period.name.toLowerCase().includes('break')) continue;
 
-        // Determine required room type
-        const requiredRoomType = isSessional ? 'Sessional' : 'Theory';
+        // Theory courses use theory periods, sessional courses use sessional periods
+        if (period.kind !== requiredKind) continue;
 
         // Preferred room check
-        let candidateRooms = [];
+        const candidateRooms: Room[] = [];
         if (assignment.primary_room_id) {
           const primaryRoom = rooms.find(r => r.id === assignment.primary_room_id);
           if (primaryRoom) candidateRooms.push(primaryRoom);
         }
-        
-        // Add other rooms that match type (or are usable for both) and capacity
+
+        // Add other rooms that match type (or are usable for both) and capacity,
+        // preferring rooms whose departmental type matches the section's
         candidateRooms.push(...rooms.filter(r =>
           r.id !== assignment.primary_room_id &&
-          (r.room_type === requiredRoomType || r.room_type === 'Both') &&
-          r.capacity >= assignment.section.total_students
-        ).sort(() => Math.random() - 0.5));
+          this.roomFits(r, assignment.course.course_type, assignment.section.total_students)
+        )
+          .sort(() => Math.random() - 0.5)
+          .sort((a, b) =>
+            (a.departmental_type === sectionDeptType ? 0 : 1) -
+            (b.departmental_type === sectionDeptType ? 0 : 1)
+          ));
 
         for (const room of candidateRooms) {
           const hasConflicts = await this.checkConflicts(
@@ -325,17 +356,7 @@ export class RoutineGeneratorService {
           );
 
           if (!hasConflicts) {
-            // Success! Create the slot
-            await this.classSlotRepository.save({
-              semester_id: semesterId,
-              course_id: assignment.course_id,
-              section_id: assignment.section_id,
-              room_id: room.id,
-              day: day.name,
-              start: period.start,
-              end: period.end,
-              week: 'EVERY',
-            });
+            await this.saveSlot(semesterId, assignment, room, day.name, period);
             assignedDays.push(day.name);
             return true;
           }
@@ -356,7 +377,18 @@ export class RoutineGeneratorService {
     roomUnavail: RoomUnavailability[],
     overrideTeacherIds?: string[]
   ): Promise<boolean> {
-    // 1. Room conflict (already assigned)
+    if (await this.hasRoomConflict(semesterId, day, period, room, roomUnavail)) return true;
+    return this.hasSectionOrTeacherConflict(semesterId, day, period, assignment, teacherUnavail, overrideTeacherIds);
+  }
+
+  private async hasRoomConflict(
+    semesterId: string,
+    day: string,
+    period: Pick<Period, 'start' | 'end'>,
+    room: Room,
+    roomUnavail: RoomUnavailability[],
+  ): Promise<boolean> {
+    // Room conflict (already assigned)
     const roomConflict = await this.classSlotRepository.findOne({
       where: {
         semester_id: semesterId,
@@ -368,15 +400,24 @@ export class RoutineGeneratorService {
     });
     if (roomConflict) return true;
 
-    // 2. Room unavailability
-    const roomUn = roomUnavail.find(u => 
-      u.room_id === room.id && 
-      u.days.includes(day) && 
+    // Room unavailability
+    const roomUn = roomUnavail.find(u =>
+      u.room_id === room.id &&
+      u.days.includes(day) &&
       this.timesOverlap(u.start, u.end, period.start, period.end)
     );
-    if (roomUn) return true;
+    return !!roomUn;
+  }
 
-    // 3. Section conflict
+  private async hasSectionOrTeacherConflict(
+    semesterId: string,
+    day: string,
+    period: Pick<Period, 'start' | 'end'>,
+    assignment: CourseSectionTeacher,
+    teacherUnavail: TeacherUnavailability[],
+    overrideTeacherIds?: string[]
+  ): Promise<boolean> {
+    // Section conflict
     const sectionConflict = await this.classSlotRepository.findOne({
       where: {
         semester_id: semesterId,
@@ -388,7 +429,7 @@ export class RoutineGeneratorService {
     });
     if (sectionConflict) return true;
 
-    // 4. Teacher conflict
+    // Teacher conflict
     const teacherIdsToCheck = overrideTeacherIds ?? assignment.teacher_ids;
     for (const teacherId of teacherIdsToCheck) {
       // Check if teacher assigned to another class
@@ -400,16 +441,229 @@ export class RoutineGeneratorService {
         .andWhere('slot.end = :end', { end: period.end })
         .andWhere(':teacherId = ANY(cst.teacher_ids)', { teacherId })
         .getOne();
-      
+
       if (teacherSlots) return true;
 
       // Check teacher unavailability
-      const tUn = teacherUnavail.find(u => 
-        u.teacher_id === teacherId && 
-        u.day === day && 
+      const tUn = teacherUnavail.find(u =>
+        u.teacher_id === teacherId &&
+        u.day === day &&
         this.timesOverlap(u.start, u.end, period.start, period.end)
       );
       if (tUn) return true;
+    }
+
+    return false;
+  }
+
+  private roomFits(room: Room, courseType: string, totalStudents: number): boolean {
+    const requiredRoomType = courseType.includes('sessional') ? 'Sessional' : 'Theory';
+    return (room.room_type === requiredRoomType || room.room_type === 'Both') &&
+      room.capacity >= totalStudents;
+  }
+
+  private async saveSlot(
+    semesterId: string,
+    assignment: CourseSectionTeacher,
+    room: Room,
+    day: string,
+    period: Pick<Period, 'start' | 'end'>,
+  ): Promise<void> {
+    await this.classSlotRepository.save({
+      semester_id: semesterId,
+      course_id: assignment.course_id,
+      section_id: assignment.section_id,
+      room_id: room.id,
+      day,
+      start: period.start,
+      end: period.end,
+      week: 'EVERY' as const,
+    });
+  }
+
+  private async runConflictResolution(
+    semesterId: string,
+    failures: FailedPlacement[],
+    days: Day[],
+    periods: Period[],
+    rooms: Room[],
+    teacherUnavail: TeacherUnavailability[],
+    roomUnavail: RoomUnavailability[],
+  ): Promise<number> {
+    this.addLog(`--- Conflict resolution: retrying ${failures.length} unplaced slot(s) ---`);
+    let resolved = 0;
+
+    for (const failure of failures) {
+      while (this.pauseFlag && !this.stopFlag) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (this.stopFlag) break;
+
+      const { assignment } = failure;
+      const courseInfo = `${assignment.course.code} (L${assignment.section.level} T${assignment.section.term} Sec ${assignment.section.name})`;
+
+      const success = await this.resolveFailedSlot(
+        semesterId,
+        failure,
+        days,
+        periods,
+        rooms,
+        teacherUnavail,
+        roomUnavail,
+      );
+
+      if (success) {
+        resolved++;
+        this.progress.generatedSlots++;
+        this.progress.failedSlots--;
+        const idx = this.conflictsEncountered.indexOf(`${assignment.course.code}: No available time/room slot`);
+        if (idx !== -1) this.conflictsEncountered.splice(idx, 1);
+        this.addLog(`RESOLVED: ${courseInfo} placed successfully during conflict resolution.`);
+      } else {
+        this.addLog(`UNRESOLVED: ${courseInfo} still has no valid time/room combination.`);
+      }
+    }
+
+    this.addLog(`--- Conflict resolution finished: ${resolved}/${failures.length} resolved ---`);
+    return resolved;
+  }
+
+  private async resolveFailedSlot(
+    semesterId: string,
+    failure: FailedPlacement,
+    days: Day[],
+    periods: Period[],
+    rooms: Room[],
+    teacherUnavail: TeacherUnavailability[],
+    roomUnavail: RoomUnavailability[],
+  ): Promise<boolean> {
+    const { assignment, slotTeacherIds, assignedDays } = failure;
+    const isSessional = assignment.course.course_type.includes('sessional');
+    const requiredKind = isSessional ? 'sessional' : 'theory';
+    const sectionDeptType = assignment.section.departmental_type;
+
+    const fits = (r: Room) =>
+      this.roomFits(r, assignment.course.course_type, assignment.section.total_students);
+
+    // Departmental sections get departmental rooms and vice versa;
+    // rooms of the other departmental type are only a last resort
+    const matchedRooms = rooms
+      .filter(r => fits(r) && r.departmental_type === sectionDeptType)
+      .sort(() => Math.random() - 0.5);
+    const fallbackRooms = rooms
+      .filter(r => fits(r) && r.departmental_type !== sectionDeptType)
+      .sort(() => Math.random() - 0.5);
+
+    const shuffledDays = [...days].sort(() => Math.random() - 0.5);
+    const candidatePeriods = periods
+      .filter(p => !p.is_break && !p.name.toLowerCase().includes('break') && p.kind === requiredKind)
+      .sort(() => Math.random() - 0.5);
+
+    // Attempt 1: direct placement, departmental-matched rooms first
+    for (const roomPool of [matchedRooms, fallbackRooms]) {
+      for (const day of shuffledDays) {
+        if (assignedDays.includes(day.name)) continue;
+
+        for (const period of candidatePeriods) {
+          if (await this.hasSectionOrTeacherConflict(semesterId, day.name, period, assignment, teacherUnavail, slotTeacherIds)) {
+            continue;
+          }
+
+          for (const room of roomPool) {
+            if (await this.hasRoomConflict(semesterId, day.name, period, room, roomUnavail)) continue;
+            await this.saveSlot(semesterId, assignment, room, day.name, period);
+            assignedDays.push(day.name);
+            return true;
+          }
+        }
+      }
+    }
+
+    // Attempt 2: relocate a blocking class to another room to free up a slot
+    for (const day of shuffledDays) {
+      if (assignedDays.includes(day.name)) continue;
+
+      for (const period of candidatePeriods) {
+        if (await this.hasSectionOrTeacherConflict(semesterId, day.name, period, assignment, teacherUnavail, slotTeacherIds)) {
+          continue;
+        }
+
+        for (const room of [...matchedRooms, ...fallbackRooms]) {
+          // Only rooms blocked by another class can be freed, not declared-unavailable ones
+          const roomUn = roomUnavail.find(u =>
+            u.room_id === room.id &&
+            u.days.includes(day.name) &&
+            this.timesOverlap(u.start, u.end, period.start, period.end)
+          );
+          if (roomUn) continue;
+
+          const occupant = await this.classSlotRepository.findOne({
+            where: {
+              semester_id: semesterId,
+              day: day.name,
+              room_id: room.id,
+              start: period.start,
+              end: period.end,
+            }
+          });
+          if (!occupant) continue;
+
+          const moved = await this.tryRelocateSlot(semesterId, occupant, rooms, roomUnavail);
+          if (moved) {
+            await this.saveSlot(semesterId, assignment, room, day.name, period);
+            assignedDays.push(day.name);
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /** Move an existing slot to a different room at the same day/time, keeping
+   *  section/teacher constraints intact since the time does not change. */
+  private async tryRelocateSlot(
+    semesterId: string,
+    occupant: ClassSlot,
+    rooms: Room[],
+    roomUnavail: RoomUnavailability[],
+  ): Promise<boolean> {
+    // Lab-section slots are managed elsewhere; never move them
+    if (!occupant.section_id) return false;
+
+    const occupantCst = await this.cstRepository.findOne({
+      where: {
+        semester_id: semesterId,
+        course_id: occupant.course_id,
+        section_id: occupant.section_id,
+      },
+      relations: ['course', 'section'],
+    });
+    if (!occupantCst) return false;
+
+    // Don't evict a class from its preferred room
+    if (occupantCst.primary_room_id && occupantCst.primary_room_id === occupant.room_id) return false;
+
+    const deptType = occupantCst.section.departmental_type;
+    const candidates = rooms
+      .filter(r =>
+        r.id !== occupant.room_id &&
+        this.roomFits(r, occupantCst.course.course_type, occupantCst.section.total_students)
+      )
+      .sort(() => Math.random() - 0.5)
+      .sort((a, b) =>
+        (a.departmental_type === deptType ? 0 : 1) -
+        (b.departmental_type === deptType ? 0 : 1)
+      );
+
+    for (const newRoom of candidates) {
+      const period = { start: occupant.start, end: occupant.end };
+      if (await this.hasRoomConflict(semesterId, occupant.day, period, newRoom, roomUnavail)) continue;
+
+      await this.classSlotRepository.update(occupant.id, { room_id: newRoom.id });
+      this.addLog(`Relocated ${occupantCst.course.code} (${occupant.day} ${occupant.start}) to room ${newRoom.name} to free a slot.`);
+      return true;
     }
 
     return false;
