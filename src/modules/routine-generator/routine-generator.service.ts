@@ -16,6 +16,10 @@ import { RoomUnavailability } from '../../entities/room-unavailability.entity';
 /** Short name of the home/owning department (BAUST CSE) — mirrors the frontend
  *  constant in src/lib/constants.ts. Rooms without a department belong to it. */
 const HOME_DEPT_SHORT_NAME = 'CSE';
+/** Keep in sync with `THEORY_AUTO_GENERATION_MAX_PERIOD_NUMBER` in the frontend
+ *  constants file. The backend generator cannot import that file directly
+ *  because the frontend and orchestrator build separately. */
+const THEORY_AUTO_GENERATION_MAX_PERIOD_NUMBER = 6;
 
 export enum GeneratorStatus {
   IDLE = 'IDLE',
@@ -208,6 +212,16 @@ export class RoutineGeneratorService {
       return courseType === 'sessional_3.0' ? 2 : 1;
     }
     return Math.ceil(credit);
+  }
+
+  private eligiblePeriods(periods: Period[], requiredKind: 'theory' | 'sessional'): Period[] {
+    const filtered = periods.filter(
+      (p) => !p.is_break && !p.name.toLowerCase().includes('break') && p.kind === requiredKind,
+    );
+    if (requiredKind !== 'theory') return filtered;
+    return [...filtered]
+      .sort((a, b) => a.start.localeCompare(b.start))
+      .slice(0, THEORY_AUTO_GENERATION_MAX_PERIOD_NUMBER);
   }
 
   private async runGeneration(semesterId: string, resolveConflicts: boolean) {
@@ -430,74 +444,64 @@ export class RoutineGeneratorService {
 
     // Shuffle days and periods to avoid always picking the first one
     const shuffledDays = [...ctx.days].sort(() => Math.random() - 0.5);
-    const shuffledPeriods = [...ctx.periods].sort(() => Math.random() - 0.5);
+    const candidatePeriods = this.eligiblePeriods(ctx.periods, requiredKind).sort(
+      () => Math.random() - 0.5,
+    );
 
-    for (const week of weekPatterns) {
-      for (const day of shuffledDays) {
-        // Constraint: multiple classes of same course must be on different days
-        if (assignedDays.includes(day.name)) continue;
+    for (const day of shuffledDays) {
+      // Constraint: multiple classes of same course must be on different days
+      if (assignedDays.includes(day.name)) continue;
 
-        // For sessional_0.75, try to find other sections of same course and use opposite week
-        let preferredWeek: 'EVEN' | 'ODD' | null = null;
-        if (target.courseType === 'sessional_0.75') {
-          // Look for slots of other sections of same course on this day/period
-          const otherSectionSlots = await this.classSlotRepository.find({
-            where: { 
-              semester_id: ctx.semesterId, 
-              course_id: target.courseId,
-              day: day.name
-            }
-          });
-          for (const os of otherSectionSlots) {
-            if (this.timesOverlap(os.start, os.end, shuffledPeriods[0]?.start || '00:00', shuffledPeriods[0]?.end || '23:59')) {
-              preferredWeek = os.week === 'EVEN' ? 'ODD' : 'EVEN';
-              break;
-            }
+      // For sessional_0.75, try to find other sections of same course and use opposite week
+      let preferredWeek: 'EVEN' | 'ODD' | null = null;
+      if (target.courseType === 'sessional_0.75') {
+        const otherSectionSlots = await this.classSlotRepository.find({
+          where: {
+            semester_id: ctx.semesterId,
+            course_id: target.courseId,
+            day: day.name,
+          },
+        });
+        for (const os of otherSectionSlots) {
+          if (candidatePeriods.some((period) => this.timesOverlap(os.start, os.end, period.start, period.end))) {
+            preferredWeek = os.week === 'EVEN' ? 'ODD' : 'EVEN';
+            break;
           }
         }
+      }
 
-        // Determine which weeks to try
-        const weeksToTry = preferredWeek 
-          ? [preferredWeek] 
-          : weekPatterns;
+      const weeksToTry = preferredWeek ? [preferredWeek] : weekPatterns;
 
-        for (const tryWeek of weeksToTry) {
-          for (const period of shuffledPeriods) {
-            // Skip break periods
-            if (period.is_break || period.name.toLowerCase().includes('break')) continue;
+      for (const tryWeek of weeksToTry) {
+        for (const period of candidatePeriods) {
+          if (await this.hasSectionOrTeacherConflict(ctx, day.name, period, target.coveredSectionIds, target.teacherIds, tryWeek)) {
+            continue;
+          }
 
-            // Theory courses use theory periods, sessional courses use sessional periods
-            if (period.kind !== requiredKind) continue;
+          // Preferred room first, then rooms matching type/capacity, preferring
+          // rooms whose departmental type matches the section's
+          const candidateRooms: Room[] = [];
+          if (target.primaryRoomId) {
+            const primaryRoom = ctx.rooms.find(r => r.id === target.primaryRoomId);
+            if (primaryRoom) candidateRooms.push(primaryRoom);
+          }
+          candidateRooms.push(...ctx.rooms.filter(r =>
+            r.id !== target.primaryRoomId &&
+            this.roomFits(r, target.courseType, target.totalStudents) &&
+            this.roomAllowedForCourse(r, target.courseCode, ctx)
+          )
+            .sort(() => Math.random() - 0.5)
+            .sort((a, b) =>
+              (a.departmental_type === target.deptType ? 0 : 1) -
+              (b.departmental_type === target.deptType ? 0 : 1)
+            ));
 
-            if (await this.hasSectionOrTeacherConflict(ctx, day.name, period, target.coveredSectionIds, target.teacherIds, tryWeek)) {
-              continue;
-            }
+          for (const room of candidateRooms) {
+            if (await this.hasRoomConflict(ctx, day.name, period, room, tryWeek)) continue;
 
-            // Preferred room first, then rooms matching type/capacity, preferring
-            // rooms whose departmental type matches the section's
-            const candidateRooms: Room[] = [];
-            if (target.primaryRoomId) {
-              const primaryRoom = ctx.rooms.find(r => r.id === target.primaryRoomId);
-              if (primaryRoom) candidateRooms.push(primaryRoom);
-            }
-            candidateRooms.push(...ctx.rooms.filter(r =>
-              r.id !== target.primaryRoomId &&
-              this.roomFits(r, target.courseType, target.totalStudents) &&
-              this.roomAllowedForCourse(r, target.courseCode, ctx)
-            )
-              .sort(() => Math.random() - 0.5)
-              .sort((a, b) =>
-                (a.departmental_type === target.deptType ? 0 : 1) -
-                (b.departmental_type === target.deptType ? 0 : 1)
-              ));
-
-            for (const room of candidateRooms) {
-              if (await this.hasRoomConflict(ctx, day.name, period, room, tryWeek)) continue;
-
-              await this.saveSlot(ctx.semesterId, target, room, day.name, period, tryWeek);
-              assignedDays.push(day.name);
-              return true;
-            }
+            await this.saveSlot(ctx.semesterId, target, room, day.name, period, tryWeek);
+            assignedDays.push(day.name);
+            return true;
           }
         }
       }
@@ -718,9 +722,9 @@ export class RoutineGeneratorService {
       .sort(() => Math.random() - 0.5);
 
     const shuffledDays = [...ctx.days].sort(() => Math.random() - 0.5);
-    const candidatePeriods = ctx.periods
-      .filter(p => !p.is_break && !p.name.toLowerCase().includes('break') && p.kind === requiredKind)
-      .sort(() => Math.random() - 0.5);
+    const candidatePeriods = this.eligiblePeriods(ctx.periods, requiredKind).sort(
+      () => Math.random() - 0.5,
+    );
 
     // Attempt 1: direct placement, departmental-matched rooms first
     for (const week of weekPatterns) {
