@@ -80,6 +80,8 @@ interface SchedulingContext {
   labSectionsById: Map<string, CourseLabSection>;
   sectionsById: Map<string, Section>;
   coursesById: Map<string, Course>;
+  /** course_id -> number of lab sections defined for that course this semester */
+  labCountByCourse: Map<string, number>;
 }
 
 @Injectable()
@@ -226,6 +228,11 @@ export class RoutineGeneratorService {
       const teacherUnavail = await this.teacherUnavailabilityRepository.find();
       const roomUnavail = await this.roomUnavailabilityRepository.find();
 
+      const labCountByCourse = new Map<string, number>();
+      for (const l of labSections) {
+        labCountByCourse.set(l.course_id, (labCountByCourse.get(l.course_id) ?? 0) + 1);
+      }
+
       const ctx: SchedulingContext = {
         semesterId,
         days,
@@ -240,6 +247,7 @@ export class RoutineGeneratorService {
           ...assignments.map(a => [a.course_id, a.course] as const),
           ...labSections.map(l => [l.course_id, l.course] as const),
         ]),
+        labCountByCourse,
       };
 
       // Sections covered by a lab section, per course: those course-section
@@ -270,7 +278,7 @@ export class RoutineGeneratorService {
             sectionId: null,
             labSectionId: l.id,
             coveredSectionIds: l.section_ids,
-            totalStudents: mappedSections.reduce((sum, s) => sum + s.total_students, 0),
+            totalStudents: this.labSectionStudents(l.course, ctx),
             deptType: mappedSections[0]?.departmental_type ?? 'Departmental',
             teacherIds: l.teacher_ids ?? [],
             primaryRoomId: l.primary_room_id,
@@ -530,6 +538,34 @@ export class RoutineGeneratorService {
     return false;
   }
 
+  /** Students per lab section: the course's level-term cohort split evenly
+   *  across all lab sections of the course. Since multiple departments can run
+   *  the same level-term, the cohort is restricted to the department(s) of the
+   *  sections the course's lab groups map (falling back to the course's own
+   *  department when no sections are mapped yet). */
+  private labSectionStudents(course: Course, ctx: SchedulingContext): number {
+    const labCount = ctx.labCountByCourse.get(course.id) ?? 0;
+    if (labCount === 0) return 0;
+
+    const deptIds = new Set<string | null>();
+    for (const l of ctx.labSectionsById.values()) {
+      if (l.course_id !== course.id) continue;
+      for (const sectionId of l.section_ids) {
+        const s = ctx.sectionsById.get(sectionId);
+        if (s) deptIds.add(s.department_id);
+      }
+    }
+    if (deptIds.size === 0) deptIds.add(course.department_id);
+
+    let cohortTotal = 0;
+    for (const s of ctx.sectionsById.values()) {
+      if (s.level === course.level && s.term === course.term && deptIds.has(s.department_id)) {
+        cohortTotal += s.total_students;
+      }
+    }
+    return Math.ceil(cohortTotal / labCount);
+  }
+
   private roomFits(room: Room, courseType: string, totalStudents: number): boolean {
     const requiredRoomType = courseType.includes('sessional') ? 'Sessional' : 'Theory';
     return (room.room_type === requiredRoomType || room.room_type === 'Both') &&
@@ -689,7 +725,7 @@ export class RoutineGeneratorService {
       const mappedSections = lab.section_ids
         .map(id => ctx.sectionsById.get(id))
         .filter((s): s is Section => !!s);
-      totalStudents = mappedSections.reduce((sum, s) => sum + s.total_students, 0);
+      totalStudents = this.labSectionStudents(course, ctx);
       deptType = mappedSections[0]?.departmental_type ?? 'Departmental';
       primaryRoomId = lab.primary_room_id;
     } else if (occupant.section_id) {
