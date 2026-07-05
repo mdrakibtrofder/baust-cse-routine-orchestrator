@@ -9,8 +9,13 @@ import { Period } from '../../entities/period.entity';
 import { Day } from '../../entities/day.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { CourseLabSection } from '../../entities/course-lab-section.entity';
+import { Department } from '../../entities/department.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
+
+/** Short name of the home/owning department (BAUST CSE) — mirrors the frontend
+ *  constant in src/lib/constants.ts. Rooms without a department belong to it. */
+const HOME_DEPT_SHORT_NAME = 'CSE';
 
 export enum GeneratorStatus {
   IDLE = 'IDLE',
@@ -82,6 +87,8 @@ interface SchedulingContext {
   coursesById: Map<string, Course>;
   /** course_id -> number of lab sections defined for that course this semester */
   labCountByCourse: Map<string, number>;
+  /** department_id -> short name (upper-cased), for the department room rule */
+  deptShortById: Map<string, string>;
 }
 
 @Injectable()
@@ -116,6 +123,8 @@ export class RoutineGeneratorService {
     private readonly cstRepository: Repository<CourseSectionTeacher>,
     @InjectRepository(CourseLabSection)
     private readonly labSectionRepository: Repository<CourseLabSection>,
+    @InjectRepository(Department)
+    private readonly departmentRepository: Repository<Department>,
     @InjectRepository(TeacherUnavailability)
     private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
     @InjectRepository(RoomUnavailability)
@@ -225,6 +234,7 @@ export class RoutineGeneratorService {
       });
       const rooms = await this.roomRepository.find();
       const allSections = await this.sectionRepository.find();
+      const departments = await this.departmentRepository.find();
       const teacherUnavail = await this.teacherUnavailabilityRepository.find();
       const roomUnavail = await this.roomUnavailabilityRepository.find();
 
@@ -248,6 +258,7 @@ export class RoutineGeneratorService {
           ...labSections.map(l => [l.course_id, l.course] as const),
         ]),
         labCountByCourse,
+        deptShortById: new Map(departments.map(d => [d.id, d.short_name.trim().toUpperCase()])),
       };
 
       // Sections covered by a lab section, per course: those course-section
@@ -442,7 +453,8 @@ export class RoutineGeneratorService {
         }
         candidateRooms.push(...ctx.rooms.filter(r =>
           r.id !== target.primaryRoomId &&
-          this.roomFits(r, target.courseType, target.totalStudents)
+          this.roomFits(r, target.courseType, target.totalStudents) &&
+          this.roomAllowedForCourse(r, target.courseCode, ctx)
         )
           .sort(() => Math.random() - 0.5)
           .sort((a, b) =>
@@ -572,6 +584,19 @@ export class RoutineGeneratorService {
       room.capacity >= totalStudents;
   }
 
+  /** Department room rule (mirrors the frontend pickers):
+   *  - home-dept course (code starts with CSE) -> home-department rooms only
+   *  - other course (e.g. "EEE 1270")          -> home rooms + that department's rooms */
+  private roomAllowedForCourse(room: Room, courseCode: string, ctx: SchedulingContext): boolean {
+    const roomDept = room.department_id
+      ? (ctx.deptShortById.get(room.department_id) ?? HOME_DEPT_SHORT_NAME)
+      : HOME_DEPT_SHORT_NAME;
+    if (roomDept === HOME_DEPT_SHORT_NAME) return true;
+    const m = (courseCode ?? '').trim().match(/^[A-Za-z]+/);
+    const courseDept = m ? m[0].toUpperCase() : HOME_DEPT_SHORT_NAME;
+    return roomDept === courseDept;
+  }
+
   private async saveSlot(
     semesterId: string,
     target: PlacementTarget,
@@ -629,7 +654,9 @@ export class RoutineGeneratorService {
     const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
 
-    const fits = (r: Room) => this.roomFits(r, target.courseType, target.totalStudents);
+    const fits = (r: Room) =>
+      this.roomFits(r, target.courseType, target.totalStudents) &&
+      this.roomAllowedForCourse(r, target.courseCode, ctx);
 
     // Departmental sections get departmental rooms and vice versa;
     // rooms of the other departmental type are only a last resort
@@ -744,7 +771,8 @@ export class RoutineGeneratorService {
     const candidates = ctx.rooms
       .filter(r =>
         r.id !== occupant.room_id &&
-        this.roomFits(r, course.course_type, totalStudents)
+        this.roomFits(r, course.course_type, totalStudents) &&
+        this.roomAllowedForCourse(r, course.code, ctx)
       )
       .sort(() => Math.random() - 0.5)
       .sort((a, b) =>

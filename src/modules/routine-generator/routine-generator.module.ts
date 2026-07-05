@@ -10,6 +10,7 @@ import { Period } from '../../entities/period.entity';
 import { Day } from '../../entities/day.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { CourseLabSection } from '../../entities/course-lab-section.entity';
+import { Department } from '../../entities/department.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
 
@@ -24,6 +25,7 @@ import { RoomUnavailability } from '../../entities/room-unavailability.entity';
       Day,
       CourseSectionTeacher,
       CourseLabSection,
+      Department,
       TeacherUnavailability,
       RoomUnavailability,
     ]),
