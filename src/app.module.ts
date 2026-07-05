@@ -23,6 +23,7 @@ import { RoutineGeneratorModule } from './modules/routine-generator/routine-gene
 import { CTScheduleModule } from './modules/ct-schedule/ct-schedule.module';
 import { LabSectionsModule } from './modules/lab-sections/lab-sections.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
+import { PriorityClassesModule } from './modules/priority-classes/priority-classes.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { AppSettingsModule } from './modules/app-settings/app-settings.module';
     CTScheduleModule,
     LabSectionsModule,
     AppSettingsModule,
+    PriorityClassesModule,
   ],
   controllers: [],
   providers: [],

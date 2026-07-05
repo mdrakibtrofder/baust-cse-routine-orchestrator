@@ -12,6 +12,7 @@ import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { Department } from '../../entities/department.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
+import { PriorityClass } from '../../entities/priority-class.entity';
 
 /** Short name of the home/owning department (BAUST CSE) — mirrors the frontend
  *  constant in src/lib/constants.ts. Rooms without a department belong to it. */
@@ -138,6 +139,8 @@ export class RoutineGeneratorService {
     private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
     @InjectRepository(RoomUnavailability)
     private readonly roomUnavailabilityRepository: Repository<RoomUnavailability>,
+    @InjectRepository(PriorityClass)
+    private readonly priorityClassRepository: Repository<PriorityClass>,
   ) {}
 
   getProgress(): GeneratorProgress {
@@ -403,10 +406,29 @@ export class RoutineGeneratorService {
 
       // 4. Sort: lab sections first, then other sessionals, then theory —
       // hardest-to-place go first
-      units.sort((a, b) => {
+      // Fetch priority classes
+      const priorityClasses = await this.priorityClassRepository.find({
+        where: { semester_id: semesterId },
+      });
+
+      // Link priority classes to placement units
+      const prioritizedUnits: { unit: PlacementUnit; priority?: PriorityClass }[] = units.map(unit => {
+        const priority = priorityClasses.find(p => {
+          const sectionMatch = p.section_id === unit.target.sectionId || 
+            (unit.target.coveredSectionIds && unit.target.coveredSectionIds.includes(p.section_id));
+          const courseMatch = !p.course_ids || p.course_ids.length === 0 || p.course_ids.includes(unit.target.courseId);
+          return sectionMatch && courseMatch;
+        });
+        return { unit, priority };
+      });
+
+      // Sort prioritized units: priority ones first, then sessional, then theory
+      prioritizedUnits.sort((a, b) => {
+        if (a.priority && !b.priority) return -1;
+        if (!a.priority && b.priority) return 1;
         const rank = (u: PlacementUnit) =>
           u.target.labSectionId ? 0 : u.target.courseType.includes('sessional') ? 1 : 2;
-        return rank(a) - rank(b);
+        return rank(a.unit) - rank(b.unit);
       });
 
       const total = units.reduce((sum, u) => sum + u.slotsNeeded, 0);
@@ -414,7 +436,7 @@ export class RoutineGeneratorService {
 
       // 5. Iterate and generate
       const failedPlacements: FailedPlacement[] = [];
-      for (const unit of units) {
+      for (const { unit, priority } of prioritizedUnits) {
         if (this.stopFlag) break;
 
         const target = unit.target;
@@ -440,7 +462,18 @@ export class RoutineGeneratorService {
             teacherIds: unit.slotTeacherIds?.[i] ?? target.teacherIds,
           };
 
-          const success = await this.generateSlot(ctx, slotTarget, assignedDays);
+          let success = false;
+          if (priority) {
+            this.addLog(`Priority Class matching found for ${target.label}. Attempting with priority constraints...`);
+            success = await this.generateSlot(ctx, slotTarget, assignedDays, priority);
+            if (!success) {
+              this.addLog(`Failed to place ${target.label} under priority constraints. Falling back to standard generation...`);
+            }
+          }
+
+          if (!success) {
+            success = await this.generateSlot(ctx, slotTarget, assignedDays);
+          }
 
           if (success) {
             this.progress.generatedSlots++;
@@ -502,10 +535,25 @@ export class RoutineGeneratorService {
     }
   }
 
+  private periodMatchesTimeSlots(period: Period, timeSlots: { start: string; end: string }[]): boolean {
+    const toMin = (t: string) => {
+      if (!t) return 0;
+      const cleanTime = t.replace(/[AP]M/i, "").trim();
+      const parts = cleanTime.includes(":") ? cleanTime.split(":") : cleanTime.split(".");
+      const h = Number(parts[0] || 0);
+      const m = Number(parts[1] || 0);
+      return h * 60 + m;
+    };
+    const ps = toMin(period.start);
+    const pe = toMin(period.end);
+    return timeSlots.some(ts => toMin(ts.start) === ps && toMin(ts.end) === pe);
+  }
+
   private async generateSlot(
     ctx: SchedulingContext,
     target: PlacementTarget,
     assignedDays: string[],
+    priority?: PriorityClass,
   ): Promise<boolean> {
     const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
@@ -513,11 +561,25 @@ export class RoutineGeneratorService {
       ? ['EVEN', 'ODD'] 
       : ['EVERY'];
 
-    // Shuffle days and periods to avoid always picking the first one
-    const shuffledDays = [...ctx.days].sort(() => Math.random() - 0.5);
-    const candidatePeriods = this.eligiblePeriods(ctx.periods, requiredKind).sort(
-      () => Math.random() - 0.5,
-    );
+    // Filter days based on priority if specified
+    let baseDays = ctx.days;
+    if (priority && priority.days && priority.days.length > 0) {
+      baseDays = ctx.days.filter(d => priority.days.includes(d.name));
+    }
+    const shuffledDays = [...baseDays].sort(() => Math.random() - 0.5);
+
+    // Filter periods based on priority if specified
+    let basePeriods = this.eligiblePeriods(ctx.periods, requiredKind);
+    if (priority && priority.time_slots && priority.time_slots.length > 0) {
+      basePeriods = basePeriods.filter(p => this.periodMatchesTimeSlots(p, priority.time_slots));
+    }
+    const candidatePeriods = basePeriods.sort(() => Math.random() - 0.5);
+
+    // Filter rooms based on priority if specified
+    let allowedRooms = ctx.rooms;
+    if (priority && priority.room_ids && priority.room_ids.length > 0) {
+      allowedRooms = ctx.rooms.filter(r => priority.room_ids.includes(r.id));
+    }
 
     for (const day of shuffledDays) {
       // Constraint: multiple classes of same course must be on different days
@@ -553,10 +615,10 @@ export class RoutineGeneratorService {
           // rooms whose departmental type matches the section's
           const candidateRooms: Room[] = [];
           if (target.primaryRoomId) {
-            const primaryRoom = ctx.rooms.find(r => r.id === target.primaryRoomId);
+            const primaryRoom = allowedRooms.find(r => r.id === target.primaryRoomId);
             if (primaryRoom) candidateRooms.push(primaryRoom);
           }
-          candidateRooms.push(...ctx.rooms.filter(r =>
+          candidateRooms.push(...allowedRooms.filter(r =>
             r.id !== target.primaryRoomId &&
             this.roomFits(r, target.courseType, target.totalStudents) &&
             this.roomAllowedForCourse(r, target.courseCode, ctx)
