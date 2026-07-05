@@ -122,11 +122,14 @@ export class ClassSlotsService {
   }
 
   async deleteForCourseSection(courseId: string, sectionId: string, semesterId: string): Promise<void> {
-    await this.classSlotRepository.delete({
-      semester_id: semesterId,
-      course_id: courseId,
-      section_id: sectionId,
-    });
+    await this.classSlotRepository
+      .createQueryBuilder()
+      .delete()
+      .where('semester_id = :semesterId', { semesterId })
+      .andWhere('course_id = :courseId', { courseId })
+      .andWhere('section_id = :sectionId', { sectionId })
+      .andWhere('locked = :locked', { locked: false })
+      .execute();
   }
 
   /**

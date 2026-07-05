@@ -35,6 +35,10 @@ export interface GeneratorProgress {
   totalSlots: number;
   generatedSlots: number;
   failedSlots: number;
+  /** Number of pre-existing locked class slots that were preserved across
+   *  this regeneration. A value >0 means at least one slot was kept intact
+   *  while everything else was rebuilt from scratch. */
+  lockedSlotsPreserved: number;
   logs: string[];
   startTime?: Date;
   endTime?: Date;
@@ -103,6 +107,7 @@ export class RoutineGeneratorService {
     totalSlots: 0,
     generatedSlots: 0,
     failedSlots: 0,
+    lockedSlotsPreserved: 0,
     logs: [],
   };
 
@@ -188,6 +193,7 @@ export class RoutineGeneratorService {
       totalSlots: 0,
       generatedSlots: 0,
       failedSlots: 0,
+      lockedSlotsPreserved: 0,
       logs: [],
     };
   }
@@ -229,16 +235,28 @@ export class RoutineGeneratorService {
     const lockedSlots = backupSlots.filter(s => s.locked);
 
     try {
-      // 1. Clear non-locked slots for the semester
+      // 1. Clear non-locked slots for the semester.
+      //    Locked slots are user-pinned entries and must be preserved across
+      //    every regeneration. We only wipe the rows whose `locked` flag is
+      //    explicitly false; if there are no locked slots we wipe everything.
       if (lockedSlots.length > 0) {
         this.addLog(`Preserving ${lockedSlots.length} locked class slot(s).`);
-        await this.classSlotRepository.delete({ 
-          semester_id: semesterId, 
-          locked: false 
-        });
+        const deleted = await this.classSlotRepository
+          .createQueryBuilder()
+          .delete()
+          .where('semester_id = :semesterId', { semesterId })
+          .andWhere('locked = :locked', { locked: false })
+          .execute();
+        this.addLog(`Removed ${deleted.affected ?? 0} non-locked class slot(s) before regeneration.`);
+        this.progress.lockedSlotsPreserved = lockedSlots.length;
       } else {
-        await this.classSlotRepository.delete({ semester_id: semesterId });
-        this.addLog('Cleared existing class slots for this semester.');
+        const deleted = await this.classSlotRepository
+          .createQueryBuilder()
+          .delete()
+          .where('semester_id = :semesterId', { semesterId })
+          .execute();
+        this.addLog(`Cleared ${deleted.affected ?? 0} existing class slot(s) for this semester.`);
+        this.progress.lockedSlotsPreserved = 0;
       }
 
       // 2. Fetch all required data
@@ -465,8 +483,18 @@ export class RoutineGeneratorService {
 
     } catch (err) {
       this.addLog('Rollback: Restoring previous slots due to error.');
-      await this.classSlotRepository.delete({ semester_id: semesterId });
-      await this.classSlotRepository.save(backupSlots);
+      // Wipe the partial state and restore the original snapshot. The
+      // snapshot includes locked slots whose `locked: true` flag must be
+      // preserved; TypeORM `save` will upsert by primary key and keep the
+      // flag intact.
+      await this.classSlotRepository
+        .createQueryBuilder()
+        .delete()
+        .where('semester_id = :semesterId', { semesterId })
+        .execute();
+      if (backupSlots.length > 0) {
+        await this.classSlotRepository.save(backupSlots);
+      }
 
       this.progress.status = GeneratorStatus.FAILED;
       this.addLog(`Generation failed: ${err}`);
@@ -842,6 +870,12 @@ export class RoutineGeneratorService {
     ctx: SchedulingContext,
     occupant: ClassSlot,
   ): Promise<boolean> {
+    // Locked slots are user-pinned schedule entries; they must NEVER be
+    // relocated by the generator, otherwise the lock contract is broken.
+    if (occupant.locked) {
+      return false;
+    }
+
     const course = ctx.coursesById.get(occupant.course_id);
     if (!course) return false;
 
