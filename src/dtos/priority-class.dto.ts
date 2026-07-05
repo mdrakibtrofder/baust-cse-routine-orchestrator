@@ -1,4 +1,4 @@
-import { IsUUID, IsInt, IsString, IsArray, IsOptional, ValidateNested, IsNotEmpty } from 'class-validator';
+import { IsUUID, IsInt, IsString, IsArray, IsOptional, ValidateNested, IsNotEmpty, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class TimeSlotDto {
@@ -30,6 +30,10 @@ export class CreatePriorityClassDto {
   @IsUUID()
   @IsNotEmpty()
   section_id: string;
+
+  @IsNotEmpty()
+  @IsIn(['Theory', 'Sessional'])
+  course_type: 'Theory' | 'Sessional';
 
   @IsOptional()
   @IsArray()

@@ -37,6 +37,9 @@ export class PriorityClass {
   @Column({ type: 'varchar', array: true, default: () => 'array[]::varchar[]' })
   days: string[];
 
+  @Column({ type: 'varchar', length: 20, default: 'Theory' })
+  course_type: 'Theory' | 'Sessional';
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 
