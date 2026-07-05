@@ -82,7 +82,7 @@ export class LabSectionsService {
   }
 
   /**
-   * Replace all class slots for a specific lab section. A slot represents one physical
+   * Replace all class slots for a specific lab section, preserving locked slots. A slot represents one physical
    * meeting shared by every actual section in the lab section's `section_ids` mapping,
    * so `section_id` is left null on these slots — the affected sections are derived from
    * the lab section itself wherever slots are read (routine views, conflict checks).
@@ -95,7 +95,15 @@ export class LabSectionsService {
     if (!lg) throw new NotFoundException(`Lab section ${labSectionId} not found`);
 
     return this.dataSource.transaction(async (manager) => {
-      await manager.delete(ClassSlot, { lab_section_id: labSectionId });
+      // Fetch existing slots to keep locked ones
+      const existingSlots = await manager.find(ClassSlot, {
+        where: { lab_section_id: labSectionId },
+      });
+      const lockedSlots = existingSlots.filter(s => s.locked);
+      
+      // Delete non-locked slots
+      await manager.delete(ClassSlot, { lab_section_id: labSectionId, locked: false });
+      
       const entities = slots.map((s) =>
         manager.create(ClassSlot, {
           semester_id: lg.semester_id,
@@ -107,9 +115,12 @@ export class LabSectionsService {
           end: s.end,
           room_id: s.room_id,
           week: (s.week || 'EVERY') as any,
+          locked: false,
         }),
       );
-      return manager.save(ClassSlot, entities);
+      
+      const savedNew = await manager.save(ClassSlot, entities);
+      return [...lockedSlots, ...savedNew];
     });
   }
 }

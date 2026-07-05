@@ -42,6 +42,9 @@ export class ClassSlot {
   @Column({ type: 'uuid', nullable: true })
   lab_section_id: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  locked: boolean;
+
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 

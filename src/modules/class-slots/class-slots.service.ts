@@ -130,7 +130,7 @@ export class ClassSlotsService {
   }
 
   /**
-   * Atomically replace all class slots for a course-section.
+   * Atomically replace all class slots for a course-section, preserving locked slots.
    * When force=false (default), throws ConflictException if any slot has conflicts.
    * When force=true, skips conflict validation and saves regardless.
    */
@@ -179,18 +179,32 @@ export class ClassSlotsService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Only delete non-lab-section slots; lab section slots are managed separately
+      // Fetch existing slots to keep locked ones
+      const existingSlots = await manager.find(ClassSlot, {
+        where: {
+          semester_id: semesterId,
+          course_id: courseId,
+          section_id: sectionId,
+          lab_section_id: null,
+        },
+      });
+      
+      const lockedSlots = existingSlots.filter(s => s.locked);
+      
+      // Delete non-locked slots
       await manager
         .createQueryBuilder()
         .delete()
         .from(ClassSlot)
-        .where('semester_id = :semesterId AND course_id = :courseId AND section_id = :sectionId AND lab_section_id IS NULL', {
+        .where('semester_id = :semesterId AND course_id = :courseId AND section_id = :sectionId AND lab_section_id IS NULL AND locked = false', {
           semesterId,
           courseId,
           sectionId,
         })
         .execute();
-      const entities = slots.map((s) =>
+        
+      // Create new non-locked slots
+      const newEntities = slots.map((s) =>
         manager.create(ClassSlot, {
           semester_id: semesterId,
           course_id: courseId,
@@ -200,9 +214,13 @@ export class ClassSlotsService {
           end: s.end,
           room_id: s.room_id,
           week: (s.week || 'EVERY') as any,
+          locked: false,
         }),
       );
-      return manager.save(ClassSlot, entities);
+      
+      // Save new slots and keep locked ones
+      const savedNew = await manager.save(ClassSlot, newEntities);
+      return [...lockedSlots, ...savedNew];
     });
   }
 

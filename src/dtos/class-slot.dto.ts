@@ -1,4 +1,4 @@
-import { IsUUID, IsString, Matches, IsOptional, IsEnum } from 'class-validator';
+import { IsUUID, IsString, Matches, IsOptional, IsEnum, IsBoolean } from 'class-validator';
 
 export class CreateClassSlotDto {
   @IsUUID()
@@ -26,4 +26,8 @@ export class CreateClassSlotDto {
   @IsOptional()
   @IsEnum(['EVERY', 'EVEN', 'ODD'])
   week?: 'EVERY' | 'EVEN' | 'ODD';
+
+  @IsOptional()
+  @IsBoolean()
+  locked?: boolean;
 }

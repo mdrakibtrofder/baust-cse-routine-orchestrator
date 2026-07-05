@@ -226,11 +226,20 @@ export class RoutineGeneratorService {
 
   private async runGeneration(semesterId: string, resolveConflicts: boolean) {
     const backupSlots = await this.classSlotRepository.find({ where: { semester_id: semesterId } });
+    const lockedSlots = backupSlots.filter(s => s.locked);
 
     try {
-      // 1. Clear existing slots for the semester
-      await this.classSlotRepository.delete({ semester_id: semesterId });
-      this.addLog('Cleared existing class slots for this semester.');
+      // 1. Clear non-locked slots for the semester
+      if (lockedSlots.length > 0) {
+        this.addLog(`Preserving ${lockedSlots.length} locked class slot(s).`);
+        await this.classSlotRepository.delete({ 
+          semester_id: semesterId, 
+          locked: false 
+        });
+      } else {
+        await this.classSlotRepository.delete({ semester_id: semesterId });
+        this.addLog('Cleared existing class slots for this semester.');
+      }
 
       // 2. Fetch all required data
       const assignments = await this.cstRepository.find({
@@ -284,6 +293,23 @@ export class RoutineGeneratorService {
         labCoveredSections.set(l.course_id, set);
       }
 
+      // Track locked slots by course-section/lab-section
+      const lockedCountsByCourseSection = new Map<string, number>(); // key: courseId:sectionId
+      const lockedCountsByLabSection = new Map<string, number>();     // key: labSectionId
+      for (const slot of lockedSlots) {
+        if (slot.lab_section_id) {
+          const key = slot.lab_section_id;
+          lockedCountsByLabSection.set(key, (lockedCountsByLabSection.get(key) ?? 0) + 1);
+          this.addLog(`LOCKED: Preserving lab section slot: ${ctx.coursesById.get(slot.course_id)?.code} (Lab Sec ${ctx.labSectionsById.get(slot.lab_section_id)?.label}) on ${slot.day} ${slot.start}-${slot.end}`);
+        } else if (slot.section_id) {
+          const key = `${slot.course_id}:${slot.section_id}`;
+          lockedCountsByCourseSection.set(key, (lockedCountsByCourseSection.get(key) ?? 0) + 1);
+          const course = ctx.coursesById.get(slot.course_id);
+          const section = ctx.sectionsById.get(slot.section_id);
+          this.addLog(`LOCKED: Preserving slot: ${course?.code} (L${section?.level} T${section?.term} Sec ${section?.name}) on ${slot.day} ${slot.start}-${slot.end}`);
+        }
+      }
+
       // 3. Build placement units
       const units: PlacementUnit[] = [];
 
@@ -295,22 +321,30 @@ export class RoutineGeneratorService {
         const mappedSections = l.section_ids
           .map(id => ctx.sectionsById.get(id))
           .filter((s): s is Section => !!s);
-        units.push({
-          target: {
-            courseId: l.course_id,
-            courseCode: l.course.code,
-            courseType: l.course.course_type,
-            sectionId: null,
-            labSectionId: l.id,
-            coveredSectionIds: l.section_ids,
-            totalStudents: this.labSectionStudents(l.course, ctx),
-            deptType: mappedSections[0]?.departmental_type ?? 'Departmental',
-            teacherIds: l.teacher_ids ?? [],
-            primaryRoomId: l.primary_room_id,
-            label: `${l.course.code} (Lab Sec ${l.label})`,
-          },
-          slotsNeeded: this.slotsNeededFor(l.course.course_type, l.course.credit),
-        });
+        const slotsNeeded = this.slotsNeededFor(l.course.course_type, l.course.credit);
+        const lockedSlotsForThisLab = lockedCountsByLabSection.get(l.id) ?? 0;
+        const slotsToGenerate = slotsNeeded - lockedSlotsForThisLab;
+        
+        if (slotsToGenerate > 0) {
+          units.push({
+            target: {
+              courseId: l.course_id,
+              courseCode: l.course.code,
+              courseType: l.course.course_type,
+              sectionId: null,
+              labSectionId: l.id,
+              coveredSectionIds: l.section_ids,
+              totalStudents: this.labSectionStudents(l.course, ctx),
+              deptType: mappedSections[0]?.departmental_type ?? 'Departmental',
+              teacherIds: l.teacher_ids ?? [],
+              primaryRoomId: l.primary_room_id,
+              label: `${l.course.code} (Lab Sec ${l.label})`,
+            },
+            slotsNeeded: slotsToGenerate,
+          });
+        } else if (slotsToGenerate === 0) {
+          this.addLog(`SKIPPING lab section ${l.course.code}-${l.label}: All ${slotsNeeded} slot(s) are locked.`);
+        }
       }
 
       for (const a of assignments) {
@@ -321,23 +355,32 @@ export class RoutineGeneratorService {
         const isSplit = a.course.course_type === 'sessional_3.0' &&
           Array.isArray(a.slot_teacher_ids) &&
           a.slot_teacher_ids.length > 0;
-        units.push({
-          target: {
-            courseId: a.course_id,
-            courseCode: a.course.code,
-            courseType: a.course.course_type,
-            sectionId: a.section_id,
-            labSectionId: null,
-            coveredSectionIds: [a.section_id],
-            totalStudents: a.section.total_students,
-            deptType: a.section.departmental_type,
-            teacherIds: a.teacher_ids ?? [],
-            primaryRoomId: a.primary_room_id,
-            label: `${a.course.code} (L${a.section.level} T${a.section.term} Sec ${a.section.name})`,
-          },
-          slotsNeeded: this.slotsNeededFor(a.course.course_type, a.course.credit),
-          slotTeacherIds: isSplit ? a.slot_teacher_ids : null,
-        });
+        const key = `${a.course_id}:${a.section_id}`;
+        const slotsNeeded = this.slotsNeededFor(a.course.course_type, a.course.credit);
+        const lockedSlotsForThisSection = lockedCountsByCourseSection.get(key) ?? 0;
+        const slotsToGenerate = slotsNeeded - lockedSlotsForThisSection;
+
+        if (slotsToGenerate > 0) {
+          units.push({
+            target: {
+              courseId: a.course_id,
+              courseCode: a.course.code,
+              courseType: a.course.course_type,
+              sectionId: a.section_id,
+              labSectionId: null,
+              coveredSectionIds: [a.section_id],
+              totalStudents: a.section.total_students,
+              deptType: a.section.departmental_type,
+              teacherIds: a.teacher_ids ?? [],
+              primaryRoomId: a.primary_room_id,
+              label: `${a.course.code} (L${a.section.level} T${a.section.term} Sec ${a.section.name})`,
+            },
+            slotsNeeded: slotsToGenerate,
+            slotTeacherIds: isSplit ? a.slot_teacher_ids : null,
+          });
+        } else if (slotsToGenerate === 0) {
+          this.addLog(`SKIPPING ${a.course.code} (L${a.section.level} T${a.section.term} Sec ${a.section.name}): All ${slotsNeeded} slot(s) are locked.`);
+        }
       }
 
       // 4. Sort: lab sections first, then other sessionals, then theory —
@@ -665,6 +708,7 @@ export class RoutineGeneratorService {
       start: period.start,
       end: period.end,
       week: week || this.getWeekPattern(target.courseType),
+      locked: false,
     });
   }
 
