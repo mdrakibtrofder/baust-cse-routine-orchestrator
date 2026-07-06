@@ -7,8 +7,13 @@ export class CheckConflictsDto {
   @IsUUID()
   course_id: string;
 
+  @IsOptional()
   @IsUUID()
-  section_id: string;
+  section_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lab_section_id?: string;
 
   @IsArray()
   @IsUUID('all', { each: true })
@@ -39,5 +44,5 @@ export class CheckConflictsDto {
   ignoreCourseSectionSlots?: boolean;
 
   @IsOptional()
-  siblingSlots?: Array<{ id: string; day: string; start: string; end: string; week: string; semester_id: string; course_id: string; section_id: string }>;
+  siblingSlots?: Array<{ id: string; day: string; start: string; end: string; week: string; semester_id: string; course_id: string; section_id?: string; lab_section_id?: string }>;
 }

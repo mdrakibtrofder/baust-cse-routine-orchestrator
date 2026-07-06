@@ -1,11 +1,11 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { LabSectionsService } from './lab-sections.service';
 import { BatchSaveLabSectionsDto, UpdateLabSectionDto } from '../../dtos/lab-section.dto';
-import { IsArray } from 'class-validator';
+import { IsArray, IsOptional, IsBoolean } from 'class-validator';
 
 class BatchReplaceSlotsDto {
   @IsArray()
-  slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>;
+  slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string; locked?: boolean }>;
 }
 
 @Controller('lab-sections')

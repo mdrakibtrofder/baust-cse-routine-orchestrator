@@ -7,6 +7,7 @@ import { Room } from '../../entities/room.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
+import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { ClassSlotsService } from './class-slots.service';
 import { ClassSlotsController } from './class-slots.controller';
 
@@ -20,6 +21,7 @@ import { ClassSlotsController } from './class-slots.controller';
       CourseSectionTeacher,
       TeacherUnavailability,
       RoomUnavailability,
+      CourseLabSection,
     ])
   ],
   controllers: [ClassSlotsController],

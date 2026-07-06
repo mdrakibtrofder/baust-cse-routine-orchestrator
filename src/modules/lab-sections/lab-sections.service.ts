@@ -89,21 +89,21 @@ export class LabSectionsService {
    */
   async batchReplaceSlots(
     labSectionId: string,
-    slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string }>,
+    slots: Array<{ day: string; start: string; end: string; room_id: string; week?: string; locked?: boolean }>,
   ): Promise<ClassSlot[]> {
     const lg = await this.repo.findOne({ where: { id: labSectionId } });
     if (!lg) throw new NotFoundException(`Lab section ${labSectionId} not found`);
 
     return this.dataSource.transaction(async (manager) => {
-      // Fetch existing slots to keep locked ones
+      // Fetch existing slots
       const existingSlots = await manager.find(ClassSlot, {
         where: { lab_section_id: labSectionId },
       });
-      const lockedSlots = existingSlots.filter(s => s.locked);
       
-      // Delete non-locked slots
-      await manager.delete(ClassSlot, { lab_section_id: labSectionId, locked: false });
+      // Delete all existing slots
+      await manager.delete(ClassSlot, { lab_section_id: labSectionId });
       
+      // Create new slots preserving locked status from input
       const entities = slots.map((s) =>
         manager.create(ClassSlot, {
           semester_id: lg.semester_id,
@@ -115,12 +115,11 @@ export class LabSectionsService {
           end: s.end,
           room_id: s.room_id,
           week: (s.week || 'EVERY') as any,
-          locked: false,
+          locked: s.locked ?? false,
         }),
       );
       
-      const savedNew = await manager.save(ClassSlot, entities);
-      return [...lockedSlots, ...savedNew];
+      return await manager.save(ClassSlot, entities);
     });
   }
 }

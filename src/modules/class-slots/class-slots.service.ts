@@ -8,6 +8,7 @@ import { Room } from '../../entities/room.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { TeacherUnavailability } from '../../entities/teacher-unavailability.entity';
 import { RoomUnavailability } from '../../entities/room-unavailability.entity';
+import { CourseLabSection } from '../../entities/course-lab-section.entity';
 import { CreateClassSlotDto } from '../../dtos/class-slot.dto';
 import { UpdateClassSlotDto } from '../../dtos/update-dtos/update-class-slot.dto';
 import { CheckConflictsDto } from '../../dtos/check-conflicts.dto';
@@ -30,6 +31,8 @@ export class ClassSlotsService {
     private readonly teacherUnavailabilityRepository: Repository<TeacherUnavailability>,
     @InjectRepository(RoomUnavailability)
     private readonly roomUnavailabilityRepository: Repository<RoomUnavailability>,
+    @InjectRepository(CourseLabSection)
+    private readonly labSectionRepository: Repository<CourseLabSection>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -84,32 +87,55 @@ export class ClassSlotsService {
   async update(id: string, dto: UpdateClassSlotDto): Promise<ClassSlot> {
     const slot = await this.findById(id);
 
-    const cst = await this.cstRepository.findOne({
-      where: {
+    // Check if only locked is being modified - compare all keys!
+    let onlyModifyingLocked = true;
+    for (const key of Object.keys(dto)) {
+      if (key === 'locked') continue;
+      // @ts-ignore
+      if (dto[key] !== slot[key]) {
+        onlyModifyingLocked = false;
+        break;
+      }
+    }
+
+    if (!onlyModifyingLocked) {
+      // Get teacher ids - check if it's a lab slot or regular
+      let teacherIds: string[] = [];
+      if (slot.lab_section_id) {
+        const labSection = await this.labSectionRepository?.findOne({ 
+          where: { id: slot.lab_section_id } 
+        });
+        teacherIds = labSection?.teacher_ids ?? [];
+      } else {
+        const cst = await this.cstRepository.findOne({
+          where: {
+            semester_id: dto.semester_id || slot.semester_id,
+            course_id: dto.course_id || slot.course_id,
+            section_id: dto.section_id || slot.section_id,
+          },
+        });
+        teacherIds = cst ? cst.teacher_ids : [];
+      }
+
+      const conflictDto: CheckConflictsDto = {
         semester_id: dto.semester_id || slot.semester_id,
         course_id: dto.course_id || slot.course_id,
         section_id: dto.section_id || slot.section_id,
-      },
-    });
+        lab_section_id: dto.lab_section_id || slot.lab_section_id,
+        day: dto.day || slot.day,
+        start: dto.start || slot.start,
+        end: dto.end || slot.end,
+        room_id: dto.room_id !== undefined ? dto.room_id : slot.room_id,
+        week: dto.week || slot.week,
+        teacher_ids: teacherIds,
+        ignoreSlotId: id,
+        ignoreCourseSectionSlots: true,
+      };
 
-    const teacherIds = cst ? cst.teacher_ids : [];
-
-    const conflictDto: CheckConflictsDto = {
-      semester_id: dto.semester_id || slot.semester_id,
-      course_id: dto.course_id || slot.course_id,
-      section_id: dto.section_id || slot.section_id,
-      day: dto.day || slot.day,
-      start: dto.start || slot.start,
-      end: dto.end || slot.end,
-      room_id: dto.room_id !== undefined ? dto.room_id : slot.room_id,
-      week: dto.week || slot.week,
-      teacher_ids: teacherIds,
-      ignoreSlotId: id,
-    };
-
-    const conflicts = await this.checkConflicts(conflictDto);
-    if (conflicts.length > 0) {
-      throw new ConflictException({ message: 'Conflicts detected', conflicts });
+      const conflicts = await this.checkConflicts(conflictDto);
+      if (conflicts.length > 0) {
+        throw new ConflictException({ message: 'Conflicts detected', conflicts });
+      }
     }
 
     Object.assign(slot, dto);
@@ -231,19 +257,35 @@ export class ClassSlotsService {
     const conflicts: Conflict[] = [];
 
     const course = await this.courseRepository.findOne({ where: { id: dto.course_id } });
-    const section = await this.sectionRepository.findOne({ where: { id: dto.section_id } });
 
-    if (!course || !section) {
+    if (!course) {
       return [];
+    }
+
+    // Get total students - if lab section, get sum of all linked sections
+    let totalStudents = 0;
+    let isLab = false;
+    if (dto.lab_section_id) {
+      isLab = true;
+      const labSection = await this.labSectionRepository.findOne({
+        where: { id: dto.lab_section_id },
+      });
+      if (labSection?.section_ids.length) {
+        const sections = await this.sectionRepository.findByIds(labSection.section_ids);
+        totalStudents = sections.reduce((sum, s) => sum + s.total_students, 0);
+      }
+    } else if (dto.section_id) {
+      const section = await this.sectionRepository.findOne({ where: { id: dto.section_id } });
+      totalStudents = section?.total_students ?? 0;
     }
 
     if (dto.room_id) {
       const room = await this.roomRepository.findOne({ where: { id: dto.room_id } });
       if (room) {
-        if (room.capacity < section.total_students) {
+        if (room.capacity < totalStudents) {
           conflicts.push({
             type: 'room_capacity',
-            message: `Room ${room.name} capacity (${room.capacity}) < section students (${section.total_students})`,
+            message: `Room ${room.name} capacity (${room.capacity}) < total students (${totalStudents})`,
           });
         }
 
@@ -273,8 +315,10 @@ export class ClassSlotsService {
       conflicts.push(...teacherUnavailability);
     }
 
-    const sectionConflicts = await this.checkSectionConflicts(dto);
-    conflicts.push(...sectionConflicts);
+    if (!isLab) {
+      const sectionConflicts = await this.checkSectionConflicts(dto);
+      conflicts.push(...sectionConflicts);
+    }
 
     return conflicts;
   }
@@ -292,7 +336,16 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
-      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
+      // Check if we should ignore this slot
+      const shouldIgnore = 
+        (dto.ignoreCourseSectionSlots && 
+          slot.course_id === dto.course_id && 
+          (
+            (dto.section_id && slot.section_id === dto.section_id) || 
+            (dto.lab_section_id && slot.lab_section_id === dto.lab_section_id)
+          )
+        );
+      if (shouldIgnore) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
       conflicts.push({
@@ -318,10 +371,21 @@ export class ClassSlotsService {
       if (slot.id === dto.ignoreSlotId) continue;
       if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
 
-      const cst = await this.cstRepository.findOne({
-        where: { semester_id: dto.semester_id, course_id: slot.course_id, section_id: slot.section_id },
-      });
-      if (!cst || !cst.teacher_ids.some((tid) => dto.teacher_ids.includes(tid))) continue;
+      // Get teacher ids for this slot - check if it's a lab slot or regular
+      let slotTeacherIds: string[] = [];
+      if (slot.lab_section_id) {
+        const labSection = await this.labSectionRepository.findOne({
+          where: { id: slot.lab_section_id },
+        });
+        slotTeacherIds = labSection?.teacher_ids ?? [];
+      } else {
+        const cst = await this.cstRepository.findOne({
+          where: { semester_id: dto.semester_id, course_id: slot.course_id, section_id: slot.section_id },
+        });
+        slotTeacherIds = cst?.teacher_ids ?? [];
+      }
+
+      if (!slotTeacherIds.some((tid) => dto.teacher_ids.includes(tid))) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 

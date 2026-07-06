@@ -7,8 +7,13 @@ export class CreateClassSlotDto {
   @IsUUID()
   course_id: string;
 
+  @IsOptional()
   @IsUUID()
-  section_id: string;
+  section_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lab_section_id?: string;
 
   @IsString()
   day: string;
