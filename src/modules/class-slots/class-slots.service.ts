@@ -348,9 +348,11 @@ export class ClassSlotsService {
       if (shouldIgnore) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
+      const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
+      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
       conflicts.push({
         type: 'room_double',
-        message: `Room ${room?.name} already booked ${slot.day} ${slot.start}-${slot.end} by ${(slot as any).course?.code ?? 'another course'} (Sec ${(slot as any).section?.name ?? ''})`,
+        message: `Room ${room?.name} already booked ${slot.day} ${slot.start}-${slot.end} by ${courseLabel} (${sectionLabel})`,
       });
     }
 
@@ -389,9 +391,11 @@ export class ClassSlotsService {
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
+      const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
+      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
       conflicts.push({
         type: 'teacher_double',
-        message: `Assigned teacher already has class ${slot.day} ${slot.start}-${slot.end}`,
+        message: `Assigned teacher already has class ${courseLabel} (${sectionLabel}) ${slot.day} ${slot.start}-${slot.end}`,
       });
     }
 
@@ -442,7 +446,7 @@ export class ClassSlotsService {
 
     const dbSlots = await this.classSlotRepository.find({
       where: { semester_id: dto.semester_id, section_id: dto.section_id, day: dto.day },
-      relations: ['course'],
+      relations: ['course', 'section'],
     });
     const siblings = (dto.siblingSlots ?? []).filter((s) => s.day === dto.day && s.section_id === dto.section_id);
     const allSlots = [...dbSlots, ...siblings];
@@ -453,9 +457,11 @@ export class ClassSlotsService {
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
+      const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
+      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
       conflicts.push({
         type: 'section_double',
-        message: `Section already has class ${slot.day} ${slot.start}-${slot.end} for ${(slot as any).course?.code ?? 'another course'}`,
+        message: `Section ${sectionLabel} already has class ${courseLabel} ${slot.day} ${slot.start}-${slot.end}`,
       });
     }
 
