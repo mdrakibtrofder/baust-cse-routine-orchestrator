@@ -325,7 +325,21 @@ export class ClassSlotsService {
       conflicts.push(...teacherUnavailability);
     }
 
-    if (!isLab) {
+    if (isLab) {
+      // For lab sections, check conflicts for each linked section
+      const labSection = await this.labSectionRepository.findOne({
+        where: { id: dto.lab_section_id },
+      });
+      if (labSection?.section_ids.length) {
+        for (const sectionId of labSection.section_ids) {
+          const sectionConflicts = await this.checkSectionConflicts({
+            ...dto,
+            section_id: sectionId,
+          });
+          conflicts.push(...sectionConflicts);
+        }
+      }
+    } else {
       const sectionConflicts = await this.checkSectionConflicts(dto);
       conflicts.push(...sectionConflicts);
     }
@@ -346,7 +360,7 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
-      // Check if we should ignore this slot
+      // Only skip slots from the exact same lab section, not other lab sections of same course
       const shouldIgnore = 
         (dto.ignoreCourseSectionSlots && 
           slot.course_id === dto.course_id && 
@@ -359,7 +373,12 @@ export class ClassSlotsService {
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
       const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
-      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
+      const otherLabSection = slot.lab_section_id 
+        ? await this.labSectionRepository.findOne({ where: { id: slot.lab_section_id } })
+        : null;
+      const sectionLabel = otherLabSection 
+        ? otherLabSection.label 
+        : (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
       conflicts.push({
         type: 'room_double',
         message: `Room ${room?.name} already booked ${slot.day} ${slot.start}-${slot.end} by ${courseLabel} (${sectionLabel})`,
@@ -381,7 +400,13 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
-      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
+      // Only skip if it's exactly the same lab section (not other lab sections of same course)
+      if (dto.ignoreCourseSectionSlots && 
+          slot.course_id === dto.course_id && 
+          ((dto.section_id && slot.section_id === dto.section_id) ||
+           (dto.lab_section_id && slot.lab_section_id === dto.lab_section_id))) {
+        continue;
+      }
 
       // Get teacher ids for this slot - check if it's a lab slot or regular
       let slotTeacherIds: string[] = [];
@@ -402,7 +427,12 @@ export class ClassSlotsService {
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
       const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
-      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
+      const otherLabSection = slot.lab_section_id 
+        ? await this.labSectionRepository.findOne({ where: { id: slot.lab_section_id } })
+        : null;
+      const sectionLabel = otherLabSection 
+        ? otherLabSection.label 
+        : (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
       conflicts.push({
         type: 'teacher_double',
         message: `Assigned teacher already has class ${courseLabel} (${sectionLabel}) ${slot.day} ${slot.start}-${slot.end}`,
@@ -463,12 +493,27 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
-      if (dto.ignoreCourseSectionSlots && slot.course_id === dto.course_id && slot.section_id === dto.section_id) continue;
+      // Only skip if it's exactly the same lab section/section
+      const shouldIgnore = 
+        (dto.ignoreCourseSectionSlots && 
+          slot.course_id === dto.course_id && 
+          (
+            (dto.section_id && slot.section_id === dto.section_id) || 
+            (dto.lab_section_id && slot.lab_section_id === dto.lab_section_id)
+          )
+        );
+      if (shouldIgnore) continue;
       if (!this.timesOverlap(slot.start, slot.end, dto.start, dto.end)) continue;
       if (!this.weeksOverlap(slot.week, dto.week || 'EVERY')) continue;
 
       const courseLabel = (slot as any).course ? `${(slot as any).course?.code} - ${(slot as any).course?.name}` : 'another course';
-      const sectionLabel = (slot as any).section ? `Level ${(slot as any).section?.level} Term ${(slot as any).section?.term} Sec ${(slot as any).section?.name}` : 'Lab';
+      const otherLabSection = slot.lab_section_id 
+        ? await this.labSectionRepository.findOne({ where: { id: slot.lab_section_id } })
+        : null;
+      const currentSection = (slot as any).section;
+      const sectionLabel = otherLabSection 
+        ? otherLabSection.label 
+        : currentSection ? `Level ${currentSection?.level} Term ${currentSection?.term} Sec ${currentSection?.name}` : 'Lab';
       conflicts.push({
         type: 'section_double',
         message: `Section ${sectionLabel} already has class ${courseLabel} ${slot.day} ${slot.start}-${slot.end}`,

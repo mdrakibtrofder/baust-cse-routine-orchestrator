@@ -21,12 +21,21 @@ export class RoutineService {
     const teacher = await this.teacherRepo.findOne({ where: { id: teacherId } });
     if (!teacher) throw new NotFoundException('Teacher not found');
 
+    // Get regular assignments
     const assignments = await this.cstRepo.createQueryBuilder('cst')
       .where('cst.semester_id = :semesterId', { semesterId })
       .andWhere(':teacherId = ANY(cst.teacher_ids)', { teacherId })
       .getMany();
 
-    if (assignments.length === 0) {
+    // Get lab sections where this teacher is included
+    const labSectionRepo = this.classSlotRepo.manager.getRepository('course_lab_sections');
+    const labSections = await labSectionRepo.createQueryBuilder('ls')
+      .where('ls.semester_id = :semesterId', { semesterId })
+      .andWhere(':teacherId = ANY(ls.teacher_ids)', { teacherId })
+      .getMany();
+    const labSectionIds = labSections.map(ls => ls.id);
+
+    if (assignments.length === 0 && labSections.length === 0) {
       return { teacher, classes: [] };
     }
 
@@ -35,23 +44,31 @@ export class RoutineService {
       section_id: a.section_id
     }));
 
-    // Find slots matching these assignments
+    // Find slots matching these assignments OR lab sections
     const query = this.classSlotRepo.createQueryBuilder('slot')
       .leftJoinAndSelect('slot.course', 'course')
       .leftJoinAndSelect('slot.section', 'section')
       .leftJoinAndSelect('slot.room', 'room')
       .where('slot.semester_id = :semesterId', { semesterId });
 
-    // Build complex where for course/section pairs using Brackets for correct logic
     query.andWhere(new Brackets(qb => {
-      courseSectionPairs.forEach((pair, index) => {
-        const condition = `(slot.course_id = :courseId${index} AND slot.section_id = :sectionId${index})`;
-        if (index === 0) {
-          qb.where(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+      if (courseSectionPairs.length > 0) {
+        courseSectionPairs.forEach((pair, index) => {
+          const condition = `(slot.course_id = :courseId${index} AND slot.section_id = :sectionId${index})`;
+          if (index === 0) {
+            qb.where(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+          } else {
+            qb.orWhere(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+          }
+        });
+      }
+      if (labSectionIds.length > 0) {
+        if (courseSectionPairs.length > 0) {
+          qb.orWhere('slot.lab_section_id IN (:...labSectionIds)', { labSectionIds });
         } else {
-          qb.orWhere(condition, { [`courseId${index}`]: pair.course_id, [`sectionId${index}`]: pair.section_id });
+          qb.where('slot.lab_section_id IN (:...labSectionIds)', { labSectionIds });
         }
-      });
+      }
     }));
 
     const slots = await query.orderBy('slot.day', 'ASC').addOrderBy('slot.start', 'ASC').getMany();
