@@ -262,7 +262,7 @@ export class ClassSlotsService {
       return [];
     }
 
-    // Get total students - if lab section, get sum of all linked sections
+    // Get total students - if lab section, get sum of all linked sections divided by lab count
     let totalStudents = 0;
     let isLab = false;
     if (dto.lab_section_id) {
@@ -273,6 +273,16 @@ export class ClassSlotsService {
       if (labSection?.section_ids.length) {
         const sections = await this.sectionRepository.findByIds(labSection.section_ids);
         totalStudents = sections.reduce((sum, s) => sum + s.total_students, 0);
+        // Get number of lab sections for this course and semester
+        const labSectionsCount = await this.labSectionRepository.count({
+          where: { 
+            course_id: labSection.course_id, 
+            semester_id: labSection.semester_id 
+          }
+        });
+        if (labSectionsCount > 0) {
+          totalStudents = Math.ceil(totalStudents / labSectionsCount);
+        }
       }
     } else if (dto.section_id) {
       const section = await this.sectionRepository.findOne({ where: { id: dto.section_id } });
@@ -285,7 +295,7 @@ export class ClassSlotsService {
         if (room.capacity < totalStudents) {
           conflicts.push({
             type: 'room_capacity',
-            message: `Room ${room.name} capacity (${room.capacity}) < total students (${totalStudents})`,
+            message: `Room ${room.name} capacity (${room.capacity}) < per-lab students (${totalStudents})`,
           });
         }
 
