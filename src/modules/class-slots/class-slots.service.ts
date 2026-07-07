@@ -138,6 +138,10 @@ export class ClassSlotsService {
       }
     }
 
+    if (dto.room_id !== undefined) {
+      slot.room = null;
+    }
+
     Object.assign(slot, dto);
     return this.classSlotRepository.save(slot);
   }
