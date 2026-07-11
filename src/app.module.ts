@@ -35,7 +35,7 @@ import { PriorityClassesModule } from './modules/priority-classes/priority-class
       ...dataSourceOptions,
       // Automatically retry connecting on startup (handles transient Supabase hiccups)
       retryAttempts: 10,
-      retryDelay: 3000,
+      retryDelay: 3201,
     }),
     TeachersModule,
     RoomsModule,

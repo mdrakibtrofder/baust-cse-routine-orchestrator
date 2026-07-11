@@ -17,7 +17,7 @@ DB_USER=routine_user
 DB_PASSWORD=routine_pass
 DB_NAME=routine_db
 NODE_ENV=development
-APP_PORT=3000
+APP_PORT=3201
 ```
 
 ### 3. Start PostgreSQL
@@ -74,7 +74,7 @@ export class AppModule {}
 npm run start:dev
 ```
 
-Server runs at `http://localhost:3000`
+Server runs at `http://localhost:3201`
 
 ---
 
@@ -299,7 +299,7 @@ Set `logging: true` in `ormconfig.ts` to see all SQL queries in console.
 
 ### Test an Endpoint
 ```bash
-curl -X GET http://localhost:3000/api/teachers \
+curl -X GET http://localhost:3201/api/teachers \
   -H "Content-Type: application/json"
 ```
 
@@ -374,7 +374,7 @@ const data = useStore(); // Zustand store with seed.json
 ```typescript
 // Create axios instance
 const apiClient = axios.create({
-  baseURL: 'http://localhost:3000/api',
+  baseURL: 'http://localhost:3201/api',
   headers: { 'Content-Type': 'application/json' },
 });
 

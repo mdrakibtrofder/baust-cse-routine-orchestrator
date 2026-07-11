@@ -38,7 +38,7 @@ async function bootstrap() {
 
   // CORS for frontend
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3200',
     credentials: true,
   });
 
@@ -54,7 +54,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  const port = process.env.APP_PORT || 3000;
+  const port = process.env.APP_PORT || 3201;
   await app.listen(port);
   logger.log(`✅ Application is running on: http://localhost:${port}/api`);
   logger.log(`📖 API Documentation available at: http://localhost:${port}/api/docs`);

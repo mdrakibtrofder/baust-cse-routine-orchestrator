@@ -239,7 +239,7 @@ verifyMigration();
 ```typescript
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:3000/api';
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:3201/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE,
@@ -842,7 +842,7 @@ export const options = {
 
 export default function () {
   // Test GET /api/teachers
-  const teachersRes = http.get('http://localhost:3000/api/teachers');
+  const teachersRes = http.get('http://localhost:3201/api/teachers');
   check(teachersRes, {
     'teachers list status is 200': (r) => r.status === 200,
     'teachers list duration < 500ms': (r) => r.timings.duration < 500,
@@ -850,7 +850,7 @@ export default function () {
 
   // Test GET /api/class-slots
   const slotsRes = http.get(
-    'http://localhost:3000/api/class-slots?semester_id=sem-winter-2026'
+    'http://localhost:3201/api/class-slots?semester_id=sem-winter-2026'
   );
   check(slotsRes, {
     'class slots status is 200': (r) => r.status === 200,

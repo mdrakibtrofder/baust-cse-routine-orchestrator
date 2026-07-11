@@ -1242,7 +1242,7 @@ DB_NAME=routine_db
 
 # App
 NODE_ENV=development
-APP_PORT=3000
+APP_PORT=3201
 APP_PREFIX=api
 
 # JWT (optional)
@@ -1338,7 +1338,7 @@ npm run typeorm migration:run
 npm run start:dev
 ```
 
-The API will be available at `http://localhost:3000/api`
+The API will be available at `http://localhost:3201/api`
 
 ---
 

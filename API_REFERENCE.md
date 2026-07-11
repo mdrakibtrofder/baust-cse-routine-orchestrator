@@ -4,11 +4,11 @@ This document provides a detailed reference for all the API endpoints available 
 
 ## Interactive Documentation (Swagger)
 The project is equipped with Swagger for interactive API exploration and testing.
-- **Local URL:** `http://localhost:3000/api/docs`
+- **Local URL:** `http://localhost:3201/api/docs`
 
 ## Base URL
 All API endpoints are prefixed with `/api`.
-Default local URL: `http://localhost:3000/api`
+Default local URL: `http://localhost:3201/api`
 
 ---
 

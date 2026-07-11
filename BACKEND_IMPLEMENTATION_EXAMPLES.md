@@ -859,14 +859,14 @@ async function bootstrap() {
 
   // CORS for frontend
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3200',
     credentials: true,
   });
 
   app.setGlobalPrefix('api');
 
-  await app.listen(process.env.APP_PORT || 3000);
-  console.log(`✅ Application is running on port ${process.env.APP_PORT || 3000}`);
+  await app.listen(process.env.APP_PORT || 3201);
+  console.log(`✅ Application is running on port ${process.env.APP_PORT || 3201}`);
 }
 
 bootstrap();

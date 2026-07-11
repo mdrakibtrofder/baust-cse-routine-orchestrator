@@ -228,7 +228,7 @@ For full documentation: [BACKEND_DOCUMENTATION.md](./BACKEND_DOCUMENTATION.md#ap
 8. **Test Endpoint**
    - Run dev server: `npm run start:dev`
    - Test with curl or Postman
-   - Example: `curl http://localhost:3000/api/courses`
+   - Example: `curl http://localhost:3201/api/courses`
 
 ---
 

@@ -30,8 +30,8 @@ COPY package.json ./
 
 # Required env vars at runtime:
 #   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET, FRONTEND_URL
-# Optional: APP_PORT (defaults to 3000)
-EXPOSE 3000
+# Optional: APP_PORT (defaults to 3201)
+EXPOSE 3201
 
 USER node
 CMD ["node", "dist/main"]
