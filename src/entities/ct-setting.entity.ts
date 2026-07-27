@@ -13,9 +13,6 @@ export class CTSetting {
   @Column({ type: 'integer', default: 14 })
   total_weeks: number;
 
-  @Column({ type: 'integer', default: 4 })
-  start_week: number;
-
   @Column({ type: 'date', nullable: true })
   start_date: Date | null;
 

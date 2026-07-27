@@ -4,7 +4,6 @@ import { Repository } from 'typeorm';
 import { Section } from '../../entities/section.entity';
 import { ClassSlot } from '../../entities/class-slot.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
-import { CTAssignment } from '../../entities/ct-assignment.entity';
 import { CreateSectionDto } from '../../dtos/section.dto';
 import { UpdateSectionDto } from '../../dtos/update-dtos/update-section.dto';
 
@@ -17,8 +16,6 @@ export class SectionsService {
     private readonly classSlotRepository: Repository<ClassSlot>,
     @InjectRepository(CourseSectionTeacher)
     private readonly cstRepository: Repository<CourseSectionTeacher>,
-    @InjectRepository(CTAssignment)
-    private readonly ctAssignmentRepository: Repository<CTAssignment>,
   ) {}
 
   async findAll(level?: number, term?: 'I' | 'II') {
@@ -86,15 +83,14 @@ export class SectionsService {
   async delete(id: string) {
     const section = await this.findById(id);
 
-    const [slotCount, assignmentCount, ctAssignmentCount] = await Promise.all([
+    const [slotCount, assignmentCount] = await Promise.all([
       this.classSlotRepository.count({ where: { section_id: id } }),
       this.cstRepository.count({ where: { section_id: id } }),
-      this.ctAssignmentRepository.count({ where: { section_id: id } }),
     ]);
 
-    if (slotCount > 0 || assignmentCount > 0 || ctAssignmentCount > 0) {
+    if (slotCount > 0 || assignmentCount > 0) {
       throw new ConflictException(
-        `Cannot delete section "${section.name}": ${slotCount} class slot(s), ${assignmentCount} teacher assignment(s), and ${ctAssignmentCount} CT assignment(s) still reference it. Remove them first.`,
+        `Cannot delete section "${section.name}": ${slotCount} class slot(s) and ${assignmentCount} teacher assignment(s) still reference it. Remove them first.`,
       );
     }
 

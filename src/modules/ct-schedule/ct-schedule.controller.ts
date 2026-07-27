@@ -1,6 +1,12 @@
-import { Controller, Get, Post, Body, Param, Put, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, Query } from '@nestjs/common';
 import { CTScheduleService } from './ct-schedule.service';
-import { UpdateCTSettingDto, UpdateCTWeekConfigsDto, UpdateCTAssignmentDto } from '../../dtos/ct-schedule.dto';
+import {
+  UpdateCTSettingDto,
+  UpdateCTWeekConfigsDto,
+  UpdateCTAssignmentDto,
+  UpdateCTLevelTermDayMappingsDto,
+  UpdateCTLevelTermRoomMappingsDto,
+} from '../../dtos/ct-schedule.dto';
 
 @Controller('ct-schedule')
 export class CTScheduleController {
@@ -24,6 +30,26 @@ export class CTScheduleController {
   @Put('week-configs/:semesterId')
   updateWeekConfigs(@Param('semesterId') semesterId: string, @Body() dto: UpdateCTWeekConfigsDto) {
     return this.ctScheduleService.updateWeekConfigs(semesterId, dto);
+  }
+
+  @Get('day-mappings/:semesterId')
+  getDayMappings(@Param('semesterId') semesterId: string) {
+    return this.ctScheduleService.getDayMappings(semesterId);
+  }
+
+  @Put('day-mappings/:semesterId')
+  updateDayMappings(@Param('semesterId') semesterId: string, @Body() dto: UpdateCTLevelTermDayMappingsDto) {
+    return this.ctScheduleService.updateDayMappings(semesterId, dto);
+  }
+
+  @Get('room-mappings/:semesterId')
+  getRoomMappings(@Param('semesterId') semesterId: string) {
+    return this.ctScheduleService.getRoomMappings(semesterId);
+  }
+
+  @Put('room-mappings/:semesterId')
+  updateRoomMappings(@Param('semesterId') semesterId: string, @Body() dto: UpdateCTLevelTermRoomMappingsDto) {
+    return this.ctScheduleService.updateRoomMappings(semesterId, dto);
   }
 
   @Get('assignments/:semesterId')

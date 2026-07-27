@@ -5,6 +5,8 @@ import { CTScheduleController } from './ct-schedule.controller';
 import { CTSetting } from '../../entities/ct-setting.entity';
 import { CTWeekConfig } from '../../entities/ct-week-config.entity';
 import { CTAssignment } from '../../entities/ct-assignment.entity';
+import { CTLevelTermDayMapping } from '../../entities/ct-level-term-day-mapping.entity';
+import { CTLevelTermRoomMapping } from '../../entities/ct-level-term-room-mapping.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { Room } from '../../entities/room.entity';
 import { Course } from '../../entities/course.entity';
@@ -15,6 +17,8 @@ import { Course } from '../../entities/course.entity';
       CTSetting,
       CTWeekConfig,
       CTAssignment,
+      CTLevelTermDayMapping,
+      CTLevelTermRoomMapping,
       CourseSectionTeacher,
       Room,
       Course,

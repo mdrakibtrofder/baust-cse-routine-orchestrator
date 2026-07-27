@@ -1,13 +1,21 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { CTSetting } from '../../entities/ct-setting.entity';
 import { CTWeekConfig } from '../../entities/ct-week-config.entity';
 import { CTAssignment } from '../../entities/ct-assignment.entity';
+import { CTLevelTermDayMapping } from '../../entities/ct-level-term-day-mapping.entity';
+import { CTLevelTermRoomMapping } from '../../entities/ct-level-term-room-mapping.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { Room } from '../../entities/room.entity';
 import { Course } from '../../entities/course.entity';
-import { UpdateCTSettingDto, UpdateCTWeekConfigsDto, UpdateCTAssignmentDto } from '../../dtos/ct-schedule.dto';
+import {
+  UpdateCTSettingDto,
+  UpdateCTWeekConfigsDto,
+  UpdateCTAssignmentDto,
+  UpdateCTLevelTermDayMappingsDto,
+  UpdateCTLevelTermRoomMappingsDto,
+} from '../../dtos/ct-schedule.dto';
 
 @Injectable()
 export class CTScheduleService {
@@ -18,6 +26,10 @@ export class CTScheduleService {
     private readonly ctWeekConfigRepository: Repository<CTWeekConfig>,
     @InjectRepository(CTAssignment)
     private readonly ctAssignmentRepository: Repository<CTAssignment>,
+    @InjectRepository(CTLevelTermDayMapping)
+    private readonly dayMappingRepository: Repository<CTLevelTermDayMapping>,
+    @InjectRepository(CTLevelTermRoomMapping)
+    private readonly roomMappingRepository: Repository<CTLevelTermRoomMapping>,
     @InjectRepository(CourseSectionTeacher)
     private readonly cstRepository: Repository<CourseSectionTeacher>,
     @InjectRepository(Room)
@@ -35,7 +47,6 @@ export class CTScheduleService {
       settings = this.ctSettingRepository.create({
         semester_id: semesterId,
         total_weeks: 14,
-        start_week: 4,
       });
       await this.ctSettingRepository.save(settings);
     }
@@ -48,12 +59,69 @@ export class CTScheduleService {
     }
     let settings = await this.getSettings(semesterId);
     settings.total_weeks = dto.total_weeks;
-    settings.start_week = dto.start_week;
     if (dto.start_date) {
       // Ensure date is stored without time/timezone issues by using string part
       settings.start_date = new Date(dto.start_date.split('T')[0]);
     }
     return this.ctSettingRepository.save(settings);
+  }
+
+  private bucketWhere(semesterId: string, b: { level: number; term: string; departmental_type: string; department_id?: string | null }) {
+    return {
+      semester_id: semesterId,
+      level: b.level,
+      term: b.term,
+      departmental_type: b.departmental_type,
+      department_id: b.department_id ?? null,
+    } as any;
+  }
+
+  async getDayMappings(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') return [];
+    return this.dayMappingRepository.find({ where: { semester_id: semesterId } });
+  }
+
+  async updateDayMappings(semesterId: string, dto: UpdateCTLevelTermDayMappingsDto) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
+    for (const m of dto.mappings) {
+      const where = this.bucketWhere(semesterId, m);
+      let existing = await this.dayMappingRepository.findOne({ where });
+      if (existing) {
+        existing.days = m.days;
+        await this.dayMappingRepository.save(existing);
+      } else {
+        await this.dayMappingRepository.save(
+          this.dayMappingRepository.create({ ...where, days: m.days }),
+        );
+      }
+    }
+    return this.getDayMappings(semesterId);
+  }
+
+  async getRoomMappings(semesterId: string) {
+    if (!semesterId || semesterId === 'undefined') return [];
+    return this.roomMappingRepository.find({ where: { semester_id: semesterId } });
+  }
+
+  async updateRoomMappings(semesterId: string, dto: UpdateCTLevelTermRoomMappingsDto) {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
+    for (const m of dto.mappings) {
+      const where = this.bucketWhere(semesterId, m);
+      let existing = await this.roomMappingRepository.findOne({ where });
+      if (existing) {
+        existing.room_ids = m.room_ids;
+        await this.roomMappingRepository.save(existing);
+      } else {
+        await this.roomMappingRepository.save(
+          this.roomMappingRepository.create({ ...where, room_ids: m.room_ids }),
+        );
+      }
+    }
+    return this.getRoomMappings(semesterId);
   }
 
   async getWeekConfigs(semesterId: string) {
@@ -98,223 +166,170 @@ export class CTScheduleService {
     if (!semesterId || semesterId === 'undefined') return [];
     return this.ctAssignmentRepository.find({
       where: { semester_id: semesterId },
-      relations: ['course', 'section', 'room'],
+      relations: ['course', 'room'],
       order: { date: 'ASC' },
     });
   }
 
+  private static readonly WEEKDAY_CODES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+  private bucketKey(b: { level: number; term: string; departmental_type: string; department_id?: string | null }) {
+    return `${b.level}|${b.term}|${b.departmental_type}|${b.department_id || ''}`;
+  }
+
+  private dateKey(d: Date | string) {
+    return d instanceof Date ? d.toISOString().split('T')[0] : (d as string).split('T')[0];
+  }
+
+  /**
+   * Level-term-bucket based CT generation. Every course is grouped into its
+   * level+term+departmental_type(+department) bucket. Each bucket has a
+   * day-mapping (which weekdays it tests on) and a room-mapping (which rooms
+   * it may use, shared across every course in that bucket). CT1/CT2/CT3 for
+   * a course are assigned serially in chronological order — any mapped
+   * weekday may be used for any CT number — and spill onto the bucket's next
+   * available mapped day when the mapped rooms are full on a given date.
+   * There is no section dimension any more: one CTAssignment row per
+   * (course, ct_number).
+   */
   async generateSchedule(semesterId: string) {
     if (!semesterId || semesterId === 'undefined') {
       throw new ConflictException('Invalid semester ID');
     }
 
-    const settings = await this.getSettings(semesterId);
-
     // 1. Clear existing assignments
     await this.ctAssignmentRepository.delete({ semester_id: semesterId });
 
-    // 2. Get all theory courses offered in this semester
+    // 2. Determine theory courses actually offered this semester
     const csts = await this.cstRepository.find({
       where: { semester_id: semesterId },
-      relations: ['course', 'section'],
+      relations: ['course'],
     });
-
-    const theoryCsts = csts.filter(cst =>
-      cst.course.course_type.startsWith('theory')
-    );
-
-    // Filter to ensure Non-Departmental courses only get assignments for ONE section (Common CT)
-    const processedCsts: CourseSectionTeacher[] = [];
-    const nonDeptCourseIds = new Set<string>();
-
-    for (const cst of theoryCsts) {
-      if (cst.course.departmental_type === 'Non-Departmental') {
-        if (!nonDeptCourseIds.has(cst.course_id)) {
-          processedCsts.push(cst);
-          nonDeptCourseIds.add(cst.course_id);
-        }
-      } else {
-        processedCsts.push(cst);
+    const courseById = new Map<string, Course>();
+    for (const cst of csts) {
+      if (cst.course.course_type.startsWith('theory')) {
+        courseById.set(cst.course_id, cst.course);
       }
     }
+    const theoryCourses = Array.from(courseById.values());
+    if (theoryCourses.length === 0) {
+      throw new ConflictException('No theory courses offered this semester — nothing to schedule.');
+    }
 
-    // 3. Get all available CT slots (weeks/days) starting from settings.start_week
-    let availableConfigs = await this.ctWeekConfigRepository.find({
-      where: {
-        semester_id: semesterId,
-        is_available: true,
-      },
+    // 3. Group courses into level-term buckets
+    const coursesByBucket = new Map<string, Course[]>();
+    for (const course of theoryCourses) {
+      const key = this.bucketKey(course);
+      if (!coursesByBucket.has(key)) coursesByBucket.set(key, []);
+      coursesByBucket.get(key)!.push(course);
+    }
+
+    // 4. Load day mappings and room mappings, indexed by bucket
+    const [dayMappings, roomMappings, allRooms] = await Promise.all([
+      this.getDayMappings(semesterId),
+      this.getRoomMappings(semesterId),
+      this.roomRepository.find(),
+    ]);
+    const dayMappingByBucket = new Map<string, CTLevelTermDayMapping>();
+    for (const m of dayMappings) dayMappingByBucket.set(this.bucketKey(m), m);
+    const roomMappingByBucket = new Map<string, CTLevelTermRoomMapping>();
+    for (const m of roomMappings) roomMappingByBucket.set(this.bucketKey(m), m);
+    const roomsById = new Map(allRooms.map(r => [r.id, r]));
+
+    // 5. Load the semester-wide availability calendar (blackout dates already excluded)
+    const availableConfigs = await this.ctWeekConfigRepository.find({
+      where: { semester_id: semesterId, is_available: true },
       order: { week_number: 'ASC', date: 'ASC' },
     });
-
-    let filteredSlots = availableConfigs.filter(slot => slot.week_number >= settings.start_week);
-
-    // If no slots configured, auto-generate them for the configured weeks
-    if (filteredSlots.length === 0) {
-      console.log('No available CT slots found. Auto-generating slots...');
-
-      // Generate slots for each week from start_week to total_weeks
-      const autoGeneratedSlots: Partial<CTWeekConfig>[] = [];
-      const testDays = [0, 1, 2, 3, 4]; // Sunday to Thursday
-
-      for (let week = settings.start_week; week <= settings.total_weeks; week++) {
-        for (const dayOffset of testDays) {
-          if (settings.start_date) {
-            const startDate = new Date(settings.start_date);
-            const daysFromStart = (week - 1) * 7 + dayOffset;
-            const slotDate = new Date(startDate);
-            slotDate.setDate(slotDate.getDate() + daysFromStart);
-
-            autoGeneratedSlots.push({
-              semester_id: semesterId,
-              week_number: week,
-              date: slotDate,
-              is_available: true,
-            });
-          }
-        }
-      }
-
-      if (autoGeneratedSlots.length > 0) {
-        await this.ctWeekConfigRepository.save(
-          autoGeneratedSlots.map(s => this.ctWeekConfigRepository.create(s))
-        );
-        filteredSlots = autoGeneratedSlots as CTWeekConfig[];
-      } else {
-        throw new ConflictException(
-          `Cannot generate CT schedule. Please configure available weeks/days in CT Configuration. ` +
-          `Set start date and available days for weeks ${settings.start_week} to ${settings.total_weeks}.`
-        );
-      }
+    if (availableConfigs.length === 0) {
+      throw new ConflictException(
+        'No available CT dates configured. Please configure the CT calendar and Level-Term Day/Room mappings first.',
+      );
     }
 
-    // 4. Get all rooms with department info
-    const allRooms = await this.roomRepository.find({ relations: ['department'] });
-
-    if (allRooms.length === 0) {
-      throw new ConflictException('No suitable rooms available for CT scheduling.');
-    }
-
-    // 5. Group by course
-    const groupedByCourse: Record<string, CourseSectionTeacher[]> = {};
-    for (const cst of processedCsts) {
-      const courseId = cst.course_id;
-      if (!groupedByCourse[courseId]) groupedByCourse[courseId] = [];
-      groupedByCourse[courseId].push(cst);
-    }
-
-    // 6. Split available slots into 3 portions for CT1, CT2, CT3
-    const slotCount = filteredSlots.length;
-    const portion1End = Math.ceil(slotCount / 3);
-    const portion2End = Math.ceil(2 * slotCount / 3);
-
-    const portion1Slots = filteredSlots.slice(0, portion1End); // CT1
-    const portion2Slots = filteredSlots.slice(portion1End, portion2End); // CT2
-    const portion3Slots = filteredSlots.slice(portion2End); // CT3
-
-    // 7. Collect CT1, CT2, CT3 assignments by CT number
-    const assignmentsByCtNum: Record<number, Array<{ courseId: string; courseCSTs: CourseSectionTeacher[] }>> = {
-      1: [],
-      2: [],
-      3: [],
-    };
-
-    for (const courseId of Object.keys(groupedByCourse)) {
-      const courseCSTs = groupedByCourse[courseId];
-      const firstCst = courseCSTs[0];
-      const maxCtCount = firstCst.course.credit >= 3 ? 3 : 2;
-
-      for (let ctNum = 1; ctNum <= maxCtCount; ctNum++) {
-        if (!assignmentsByCtNum[ctNum]) assignmentsByCtNum[ctNum] = [];
-        assignmentsByCtNum[ctNum].push({
-          courseId,
-          courseCSTs,
-        });
-      }
-    }
-
-    // 8. Assign CTs to their respective portions
+    // 6. Generate assignments bucket by bucket
     const assignments: Partial<CTAssignment>[] = [];
-    const portionsByCtNum: Record<number, CTWeekConfig[]> = {
-      1: portion1Slots,
-      2: portion2Slots,
-      3: portion3Slots,
-    };
+    const roomBookedByDate = new Map<string, Set<string>>(); // dateStr -> booked room ids (global, across all buckets)
+    const skippedBuckets: string[] = [];
+    const shortfalls: string[] = [];
 
-    for (const ctNum of [1, 2, 3]) {
-      const coursesForThisCt = assignmentsByCtNum[ctNum] || [];
-      const slotsForThisCt = portionsByCtNum[ctNum] || [];
+    for (const [key, coursesInBucket] of coursesByBucket.entries()) {
+      const dayMapping = dayMappingByBucket.get(key);
+      const roomMapping = roomMappingByBucket.get(key);
+      const mappedDays = dayMapping?.days ?? [];
+      const mappedRoomIds = (roomMapping?.room_ids ?? []).filter(id => roomsById.has(id));
 
-      if (coursesForThisCt.length === 0 || slotsForThisCt.length === 0) continue;
+      if (mappedDays.length === 0 || mappedRoomIds.length === 0) {
+        const sample = coursesInBucket[0];
+        skippedBuckets.push(`Level ${sample.level}-${sample.term} (${sample.departmental_type})`);
+        continue;
+      }
 
-      // Distribute courses evenly across slots for this CT
-      const slotStepForCt = Math.max(1, Math.floor(slotsForThisCt.length / Math.max(1, coursesForThisCt.length)));
+      const candidateDates = availableConfigs
+        .filter(cfg => mappedDays.includes(CTScheduleService.WEEKDAY_CODES[new Date(cfg.date).getUTCDay()]))
+        .map(cfg => ({ dateStr: this.dateKey(cfg.date), date: cfg.date, week_number: cfg.week_number }));
 
-      for (let i = 0; i < coursesForThisCt.length; i++) {
-        const { courseId, courseCSTs } = coursesForThisCt[i];
-        const firstCst = courseCSTs[0];
+      if (candidateDates.length === 0) {
+        const sample = coursesInBucket[0];
+        skippedBuckets.push(`Level ${sample.level}-${sample.term} (${sample.departmental_type}) — no available date falls on mapped days`);
+        continue;
+      }
 
-        // Select slot within the designated portion for this CT
-        const slotIndex = (i * slotStepForCt) % slotsForThisCt.length;
-        const slot = slotsForThisCt[slotIndex];
+      coursesInBucket.sort((a, b) => a.code.localeCompare(b.code));
 
-        const dateStr = slot.date instanceof Date
-          ? slot.date.toISOString().split('T')[0]
-          : (slot.date as string);
+      let dateCursor = 0;
+      for (const ctNum of [1, 2, 3]) {
+        for (const course of coursesInBucket) {
+          const maxCtCount = Number(course.credit) >= 3 ? 3 : 2;
+          if (ctNum > maxCtCount) continue;
 
-        // Get rooms for this course's department (filter by department_id)
-        let departmentRooms = allRooms.filter(r => {
-          const isTheoryRoom = r.room_type === 'Theory' || r.room_type === 'Both';
-          if (!isTheoryRoom) return false;
+          let placed = false;
+          for (let i = dateCursor; i < candidateDates.length; i++) {
+            const candidate = candidateDates[i];
+            const bookedOnDate = roomBookedByDate.get(candidate.dateStr) ?? new Set<string>();
+            const freeRoomId = mappedRoomIds.find(rid => !bookedOnDate.has(rid));
+            if (!freeRoomId) continue;
 
-          if (firstCst.course.department_id) {
-            return r.department_id === firstCst.course.department_id;
-          } else {
-            // Non-departmental courses can use any theory room
-            return true;
+            bookedOnDate.add(freeRoomId);
+            roomBookedByDate.set(candidate.dateStr, bookedOnDate);
+
+            assignments.push({
+              semester_id: semesterId,
+              course_id: course.id,
+              room_id: freeRoomId,
+              week_number: candidate.week_number,
+              date: candidate.date,
+              ct_number: ctNum,
+            });
+
+            dateCursor = i;
+            placed = true;
+            break;
           }
-        });
 
-        // Fallback to all theory rooms if department-specific rooms not available
-        if (departmentRooms.length === 0) {
-          departmentRooms = allRooms.filter(r =>
-            (r.room_type === 'Theory' || r.room_type === 'Both')
-          );
-        }
-
-        // Find booked rooms on this date
-        const bookedRoomsOnDate = assignments
-          .filter(a => {
-            const aDate = a.date instanceof Date
-              ? a.date.toISOString().split('T')[0]
-              : (a.date as string);
-            return aDate === dateStr;
-          })
-          .map(a => a.room_id);
-
-        const availableRoomsOnDate = departmentRooms.filter(r => !bookedRoomsOnDate.includes(r.id));
-        const roomsToUse = availableRoomsOnDate.length > 0 ? availableRoomsOnDate : departmentRooms;
-
-        // Assign all sections of this course to the same date with different rooms
-        for (let j = 0; j < courseCSTs.length; j++) {
-          const cst = courseCSTs[j];
-          const selectedRoom = roomsToUse[j % roomsToUse.length];
-
-          assignments.push({
-            semester_id: semesterId,
-            course_id: cst.course_id,
-            section_id: cst.section_id,
-            room_id: selectedRoom.id,
-            week_number: slot.week_number,
-            date: slot.date,
-            ct_number: ctNum,
-          });
+          if (!placed) {
+            shortfalls.push(`${course.code} CT${ctNum} (Level ${course.level}-${course.term})`);
+          }
         }
       }
     }
 
-    // 9. Save assignments
+    if (assignments.length === 0) {
+      const detail = skippedBuckets.length > 0
+        ? ` Missing day/room mapping for: ${skippedBuckets.join('; ')}.`
+        : '';
+      throw new ConflictException(`Cannot generate CT schedule — no level-term has a complete day and room mapping.${detail}`);
+    }
+
+    // 7. Save assignments
     await this.ctAssignmentRepository.save(this.ctAssignmentRepository.create(assignments));
+
+    if (skippedBuckets.length > 0) {
+      console.warn('CT generation skipped buckets without mapping:', skippedBuckets.join('; '));
+    }
+    if (shortfalls.length > 0) {
+      console.warn('CT generation ran out of dates/rooms for:', shortfalls.join('; '));
+    }
 
     return this.getAssignments(semesterId);
   }
