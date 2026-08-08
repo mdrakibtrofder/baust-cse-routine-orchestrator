@@ -558,7 +558,7 @@ export class RoutineGeneratorService {
     const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
     const weekPatterns: ('EVERY' | 'EVEN' | 'ODD')[] = target.courseType === 'sessional_0.75' 
-      ? ['EVEN', 'ODD'] 
+      ? ['EVEN', 'ODD', 'EVERY'] 
       : ['EVERY'];
 
     // Filter days based on priority if specified
@@ -839,7 +839,7 @@ export class RoutineGeneratorService {
     const isSessional = target.courseType.includes('sessional');
     const requiredKind = isSessional ? 'sessional' : 'theory';
     const weekPatterns: ('EVERY' | 'EVEN' | 'ODD')[] = target.courseType === 'sessional_0.75' 
-      ? ['EVEN', 'ODD'] 
+      ? ['EVEN', 'ODD', 'EVERY'] 
       : ['EVERY'];
 
     const fits = (r: Room) =>
