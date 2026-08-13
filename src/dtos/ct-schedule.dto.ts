@@ -31,9 +31,12 @@ export class UpdateCTWeekConfigsDto {
 }
 
 export class UpdateCTAssignmentDto {
-  @IsUUID()
+  /** Every room the sitting occupies. */
   @IsOptional()
-  room_id?: string;
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID(undefined, { each: true })
+  room_ids?: string[];
 
   @IsInt()
   @IsOptional()

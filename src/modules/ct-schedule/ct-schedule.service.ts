@@ -194,7 +194,7 @@ export class CTScheduleService {
     if (!semesterId || semesterId === 'undefined') return [];
     return this.ctAssignmentRepository.find({
       where: { semester_id: semesterId },
-      relations: ['course', 'room'],
+      relations: ['course'],
       order: { date: 'ASC' },
     });
   }
@@ -223,6 +223,11 @@ export class CTScheduleService {
    * dimension: one CTAssignment row per (course, ct_number).
    *
    * Placement rules:
+   *  - **Whole room mapping per sitting.** A class test occupies *every* room mapped
+   *    to its level-term, because the entire cohort sits it at once spread across
+   *    those rooms. A date is therefore only usable if the bucket's full room set is
+   *    free, which also means two courses of the same level-term can never share a
+   *    date.
    *  - **Round by round.** Every course gets its CT1 before any course gets a CT2,
    *    and every CT2 before any CT3. Rounds are placed in ascending CT number, so
    *    a course can never end up with CT2 earlier than its CT1.
@@ -230,7 +235,7 @@ export class CTScheduleService {
    *    `CT_MIN_WEEK_GAP` weeks apart, measured in configured week numbers — CT1 in
    *    week 4 pushes CT2 to week 7 or later, and CT3 to week 10 or later.
    *  - **Earliest fit.** Within those constraints each CT takes the earliest mapped
-   *    date that still has a free mapped room, so the calendar packs from the front.
+   *    date whose rooms are all free, so the calendar packs from the front.
    */
   async generateSchedule(semesterId: string) {
     if (!semesterId || semesterId === 'undefined') {
@@ -358,17 +363,19 @@ export class CTScheduleService {
           for (const candidate of candidateDates) {
             if (candidate.week_number < earliestWeek) continue;
 
+            // The sitting needs the bucket's *entire* room mapping, so the date is
+            // only usable when none of those rooms is already taken — by another
+            // level-term sharing a room, or by another course of this one.
             const bookedOnDate = roomBookedByDate.get(candidate.dateStr) ?? new Set<string>();
-            const freeRoomId = mappedRoomIds.find(rid => !bookedOnDate.has(rid));
-            if (!freeRoomId) continue;
+            if (mappedRoomIds.some(rid => bookedOnDate.has(rid))) continue;
 
-            bookedOnDate.add(freeRoomId);
+            for (const rid of mappedRoomIds) bookedOnDate.add(rid);
             roomBookedByDate.set(candidate.dateStr, bookedOnDate);
 
             assignments.push({
               semester_id: semesterId,
               course_id: course.id,
-              room_id: freeRoomId,
+              room_ids: [...mappedRoomIds],
               week_number: candidate.week_number,
               date: candidate.dateStr as unknown as Date,
               ct_number: ctNum,
@@ -383,7 +390,7 @@ export class CTScheduleService {
             shortfalls.push(
               `${course.code} CT${ctNum} (Level ${course.level}-${course.term})` +
                 (previousWeek !== undefined
-                  ? ` — no free room on a mapped day in week ${earliestWeek} or later`
+                  ? ` — no mapped day in week ${earliestWeek} or later has all mapped rooms free`
                   : ''),
             );
           }
@@ -415,21 +422,27 @@ export class CTScheduleService {
     const assignment = await this.ctAssignmentRepository.findOne({ where: { id } });
     if (!assignment) throw new NotFoundException('Assignment not found');
 
-    if (dto.room_id && dto.date) {
-      const dateOnly = CTScheduleService.dateOnly(dto.date) as unknown as Date;
-      const collision = await this.ctAssignmentRepository.findOne({
-        where: {
-          semester_id: assignment.semester_id,
-          room_id: dto.room_id,
-          date: dateOnly,
-        },
+    const targetRoomIds = dto.room_ids ?? assignment.room_ids ?? [];
+    const targetDate = CTScheduleService.dateOnly(dto.date ?? assignment.date);
+
+    if ((dto.room_ids || dto.date) && targetRoomIds.length > 0) {
+      // A sitting takes all of its rooms, so it clashes with any other sitting on
+      // that date that shares even one room.
+      const sameDay = await this.ctAssignmentRepository.find({
+        where: { semester_id: assignment.semester_id, date: targetDate as unknown as Date },
+        relations: ['course'],
       });
-      if (collision && collision.id !== id) {
-        throw new ConflictException('Another CT is already scheduled in this room on this date');
+      const clash = sameDay.find(
+        (other) => other.id !== id && other.room_ids?.some((rid) => targetRoomIds.includes(rid)),
+      );
+      if (clash) {
+        throw new ConflictException(
+          `Room conflict: ${clash.course?.code ?? 'another CT'} CT${clash.ct_number} already uses one of these rooms on this date`,
+        );
       }
     }
 
-    if (dto.room_id) assignment.room_id = dto.room_id;
+    if (dto.room_ids) assignment.room_ids = dto.room_ids;
     if (dto.date) {
       const dateStr = CTScheduleService.dateOnly(dto.date);
       assignment.date = dateStr as unknown as Date;
