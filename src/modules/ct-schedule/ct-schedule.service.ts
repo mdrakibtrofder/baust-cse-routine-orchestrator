@@ -15,6 +15,7 @@ import {
   UpdateCTAssignmentDto,
   UpdateCTLevelTermDayMappingsDto,
   UpdateCTLevelTermRoomMappingsDto,
+  SwapCTDto,
 } from '../../dtos/ct-schedule.dto';
 
 /** Minimum number of weeks between consecutive class tests of the same course.
@@ -457,5 +458,287 @@ export class CTScheduleService {
 
     return this.ctAssignmentRepository.save(assignment);
   }
+
+  // -------------------------------------------------------------------------
+  // Swapping class tests between courses
+  // -------------------------------------------------------------------------
+
+  /** The scheduling half of a sitting — everything a swap exchanges. A sitting's
+   *  identity (course, CT number) never moves; only when and where it happens. */
+  private static slotOf(a: CTAssignment) {
+    return {
+      date: CTScheduleService.dateOnly(a.date),
+      week_number: a.week_number,
+      room_ids: [...(a.room_ids ?? [])],
+    };
+  }
+
+  private static courseLabel(c?: Course | null) {
+    return c?.code ?? 'course';
+  }
+
+  /** Resolves a swap request into the concrete pairs of sittings that will trade
+   *  places, rejecting anything the two modes forbid.
+   *
+   *  Shared rules (both modes):
+   *   - both sides belong to the semester being edited;
+   *   - the two courses are different courses;
+   *   - the two courses sit in the same level-term bucket, since the bucket owns
+   *     the weekday and room mapping a sitting is placed against.
+   *
+   *  `all` additionally requires equal credit and an identical set of CT numbers,
+   *  so every sitting on one side has exactly one partner on the other.
+   *  `single` additionally requires the two sittings to share a CT number. */
+  private async resolveSwapPairs(
+    semesterId: string,
+    dto: SwapCTDto,
+  ): Promise<{ a: CTAssignment; b: CTAssignment }[]> {
+    if (!semesterId || semesterId === 'undefined') {
+      throw new ConflictException('Invalid semester ID');
+    }
+
+    const sameBucket = (x: Course, y: Course) =>
+      x.level === y.level &&
+      x.term === y.term &&
+      x.departmental_type === y.departmental_type &&
+      (x.department_id ?? null) === (y.department_id ?? null);
+
+    if (dto.mode === 'single') {
+      if (!dto.assignment_a_id || !dto.assignment_b_id) {
+        throw new ConflictException('Both CT sittings must be supplied for a single swap.');
+      }
+      if (dto.assignment_a_id === dto.assignment_b_id) {
+        throw new ConflictException('A CT cannot be swapped with itself.');
+      }
+      const [a, b] = await Promise.all([
+        this.ctAssignmentRepository.findOne({ where: { id: dto.assignment_a_id }, relations: ['course'] }),
+        this.ctAssignmentRepository.findOne({ where: { id: dto.assignment_b_id }, relations: ['course'] }),
+      ]);
+      if (!a || !b) throw new NotFoundException('CT assignment not found');
+      if (a.semester_id !== semesterId || b.semester_id !== semesterId) {
+        throw new ConflictException('Both CTs must belong to the active semester.');
+      }
+      if (a.course_id === b.course_id) {
+        throw new ConflictException('Pick a CT of a different course to swap with.');
+      }
+      if (a.ct_number !== b.ct_number) {
+        throw new ConflictException(
+          `A CT can only swap with the same CT number — CT${a.ct_number} cannot swap with CT${b.ct_number}.`,
+        );
+      }
+      if (a.course && b.course && !sameBucket(a.course, b.course)) {
+        throw new ConflictException(
+          `${CTScheduleService.courseLabel(a.course)} and ${CTScheduleService.courseLabel(b.course)} are not in the same level-term, so their CT days and rooms are not interchangeable.`,
+        );
+      }
+      return [{ a, b }];
+    }
+
+    // ---- mode: all ----------------------------------------------------------
+    if (!dto.course_a_id || !dto.course_b_id) {
+      throw new ConflictException('Both courses must be supplied for a swap-all.');
+    }
+    if (dto.course_a_id === dto.course_b_id) {
+      throw new ConflictException('A course cannot be swapped with itself.');
+    }
+
+    const [courseA, courseB] = await Promise.all([
+      this.courseRepository.findOne({ where: { id: dto.course_a_id } }),
+      this.courseRepository.findOne({ where: { id: dto.course_b_id } }),
+    ]);
+    if (!courseA || !courseB) throw new NotFoundException('Course not found');
+
+    if (!sameBucket(courseA, courseB)) {
+      throw new ConflictException(
+        `${courseA.code} (Level ${courseA.level}-${courseA.term}) and ${courseB.code} (Level ${courseB.level}-${courseB.term}) are not in the same level-term, so their CT days and rooms are not interchangeable.`,
+      );
+    }
+    if (Number(courseA.credit) !== Number(courseB.credit)) {
+      throw new ConflictException(
+        `${courseA.code} is ${courseA.credit} credit and ${courseB.code} is ${courseB.credit} credit. Only courses of equal credit can have their whole CT series swapped.`,
+      );
+    }
+
+    const [ctsA, ctsB] = await Promise.all([
+      this.ctAssignmentRepository.find({
+        where: { semester_id: semesterId, course_id: courseA.id },
+        relations: ['course'],
+      }),
+      this.ctAssignmentRepository.find({
+        where: { semester_id: semesterId, course_id: courseB.id },
+        relations: ['course'],
+      }),
+    ]);
+    if (ctsA.length === 0 || ctsB.length === 0) {
+      throw new ConflictException('Both courses need a generated CT schedule before they can be swapped.');
+    }
+
+    const byNumberB = new Map(ctsB.map((x) => [x.ct_number, x]));
+    const numbersA = ctsA.map((x) => x.ct_number).sort((m, n) => m - n);
+    const numbersB = ctsB.map((x) => x.ct_number).sort((m, n) => m - n);
+    if (numbersA.join(',') !== numbersB.join(',')) {
+      throw new ConflictException(
+        `${courseA.code} has CT ${numbersA.join(', ')} but ${courseB.code} has CT ${numbersB.join(', ')} — every CT needs a partner to swap with.`,
+      );
+    }
+
+    return ctsA
+      .sort((m, n) => m.ct_number - n.ct_number)
+      .map((a) => ({ a, b: byNumberB.get(a.ct_number)! }));
+  }
+
+  /** Everything that would be wrong with the schedule *after* a swap, expressed as
+   *  human-readable warnings. These are advisory rather than fatal: a scheduler may
+   *  knowingly accept a tight gap, so the endpoint reports them and lets the client
+   *  re-submit with `force`.
+   *
+   *  Three things are checked against the post-swap state:
+   *   - a course's sittings must stay in CT order (CT1 before CT2 before CT3);
+   *   - consecutive sittings of one course must stay `CT_MIN_WEEK_GAP` weeks apart;
+   *   - no two sittings anywhere in the semester may share a room on a date.
+   *     A whole-series swap between two courses of one bucket can never break this
+   *     (the occupied set is merely relabelled), but the check is cheap insurance
+   *     against a room set that was hand-edited away from its bucket mapping. */
+  private async collectSwapWarnings(
+    semesterId: string,
+    pairs: { a: CTAssignment; b: CTAssignment }[],
+  ): Promise<string[]> {
+    const all = await this.ctAssignmentRepository.find({
+      where: { semester_id: semesterId },
+      relations: ['course'],
+    });
+
+    // Project the swap onto a copy of the semester's schedule.
+    const swapped = new Map<string, { date: string; week_number: number; room_ids: string[] }>();
+    for (const { a, b } of pairs) {
+      swapped.set(a.id, CTScheduleService.slotOf(b));
+      swapped.set(b.id, CTScheduleService.slotOf(a));
+    }
+    const projected = all.map((row) => {
+      const next = swapped.get(row.id);
+      return {
+        id: row.id,
+        course_id: row.course_id,
+        course: row.course,
+        ct_number: row.ct_number,
+        ...(next ?? CTScheduleService.slotOf(row)),
+      };
+    });
+    type ProjectedCT = (typeof projected)[number];
+
+    const warnings: string[] = [];
+
+    // Per-course ordering and spacing.
+    const touchedCourseIds = new Set(pairs.flatMap(({ a, b }) => [a.course_id, b.course_id]));
+    const byCourse = new Map<string, ProjectedCT[]>();
+    for (const row of projected) {
+      if (!touchedCourseIds.has(row.course_id)) continue;
+      if (!byCourse.has(row.course_id)) byCourse.set(row.course_id, []);
+      byCourse.get(row.course_id)!.push(row);
+    }
+    for (const rows of byCourse.values()) {
+      rows.sort((m, n) => m.ct_number - n.ct_number);
+      for (let i = 1; i < rows.length; i++) {
+        const prev = rows[i - 1];
+        const cur = rows[i];
+        const code = CTScheduleService.courseLabel(cur.course);
+        if (cur.week_number <= prev.week_number) {
+          warnings.push(
+            `${code}: CT${cur.ct_number} would fall in week ${cur.week_number}, on or before CT${prev.ct_number} in week ${prev.week_number} — the series would be out of order.`,
+          );
+        } else if (cur.week_number - prev.week_number < CT_MIN_WEEK_GAP) {
+          warnings.push(
+            `${code}: only ${cur.week_number - prev.week_number} week(s) between CT${prev.ct_number} and CT${cur.ct_number} — the minimum gap is ${CT_MIN_WEEK_GAP}.`,
+          );
+        }
+      }
+    }
+
+    // Room clashes across the whole semester.
+    const byDate = new Map<string, ProjectedCT[]>();
+    for (const row of projected) {
+      if (!byDate.has(row.date)) byDate.set(row.date, []);
+      byDate.get(row.date)!.push(row);
+    }
+    for (const [date, rows] of byDate.entries()) {
+      for (let i = 0; i < rows.length; i++) {
+        for (let j = i + 1; j < rows.length; j++) {
+          const shared = rows[i].room_ids.filter((rid) => rows[j].room_ids.includes(rid));
+          if (shared.length === 0) continue;
+          warnings.push(
+            `Room clash on ${date}: ${CTScheduleService.courseLabel(rows[i].course)} CT${rows[i].ct_number} and ${CTScheduleService.courseLabel(rows[j].course)} CT${rows[j].ct_number} would share a room.`,
+          );
+        }
+      }
+    }
+
+    return warnings;
+  }
+
+  /** Dry run: resolves the swap and reports what it would do, without writing.
+   *  The client uses this to show a confirmation (and any warnings) before asking
+   *  for the swap itself with `force`. */
+  async previewSwap(semesterId: string, dto: SwapCTDto) {
+    const pairs = await this.resolveSwapPairs(semesterId, dto);
+    const warnings = await this.collectSwapWarnings(semesterId, pairs);
+    return {
+      pairs: pairs.map(({ a, b }) => ({
+        ct_number: a.ct_number,
+        a: {
+          id: a.id,
+          course_id: a.course_id,
+          course_code: a.course?.code ?? null,
+          ...CTScheduleService.slotOf(a),
+        },
+        b: {
+          id: b.id,
+          course_id: b.course_id,
+          course_code: b.course?.code ?? null,
+          ...CTScheduleService.slotOf(b),
+        },
+      })),
+      warnings,
+    };
+  }
+
+  /** Performs the swap in one transaction, so a failure part-way cannot leave two
+   *  courses sharing a date. Only date, week number and room set move; the unique
+   *  (semester, course, ct_number) index is untouched, so no temporary placeholder
+   *  row is needed. */
+  async swapCTs(semesterId: string, dto: SwapCTDto) {
+    const pairs = await this.resolveSwapPairs(semesterId, dto);
+    const warnings = await this.collectSwapWarnings(semesterId, pairs);
+
+    if (warnings.length > 0 && !dto.force) {
+      throw new ConflictException({
+        message: 'Swap would leave the CT schedule inconsistent.',
+        conflicts: warnings.map((message) => ({ message })),
+      });
+    }
+
+    await this.ctAssignmentRepository.manager.transaction(async (manager) => {
+      for (const { a, b } of pairs) {
+        const slotA = CTScheduleService.slotOf(a);
+        const slotB = CTScheduleService.slotOf(b);
+        await manager.update(CTAssignment, a.id, {
+          date: slotB.date as unknown as Date,
+          week_number: slotB.week_number,
+          room_ids: slotB.room_ids,
+        });
+        await manager.update(CTAssignment, b.id, {
+          date: slotA.date as unknown as Date,
+          week_number: slotA.week_number,
+          room_ids: slotA.room_ids,
+        });
+      }
+    });
+
+    return {
+      swapped: pairs.length,
+      warnings,
+      assignments: await this.getAssignments(semesterId),
+    };
+  }
+
 }
 

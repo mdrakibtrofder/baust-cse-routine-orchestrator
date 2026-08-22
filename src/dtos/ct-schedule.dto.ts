@@ -91,3 +91,47 @@ export class UpdateCTLevelTermRoomMappingsDto {
   mappings: CTLevelTermRoomMappingItemDto[];
 }
 
+
+/** Swap class-test sittings between two courses.
+ *
+ *  Two modes, both exchanging the *scheduling* fields (date, week number and the
+ *  occupied room set) between sittings while leaving each sitting attached to its
+ *  own course:
+ *
+ *  - `all`    — every CT of course A trades places with the same-numbered CT of
+ *               course B. Both courses must carry the same credit (and therefore
+ *               the same number of sittings).
+ *  - `single` — one sitting trades places with one other sitting. The two must
+ *               share a CT number: CT1 only ever swaps with CT1, CT2 with CT2.
+ *
+ *  In both modes the two courses must sit in the same level-term bucket, because
+ *  the bucket is what determines which weekdays and which rooms a sitting may use;
+ *  swapping across buckets would land a test on a day its cohort does not test on. */
+export class SwapCTDto {
+  @IsIn(['all', 'single'])
+  mode: 'all' | 'single';
+
+  /** `all` mode: the two courses whose whole CT series trade places. */
+  @IsOptional()
+  @IsUUID()
+  course_a_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  course_b_id?: string;
+
+  /** `single` mode: the two individual sittings that trade places. */
+  @IsOptional()
+  @IsUUID()
+  assignment_a_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  assignment_b_id?: string;
+
+  /** Carry out the swap even though the preview reported warnings (a CT series
+   *  left out of order, or consecutive sittings closer than the minimum gap). */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+}

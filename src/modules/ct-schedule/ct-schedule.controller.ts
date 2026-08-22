@@ -6,6 +6,7 @@ import {
   UpdateCTAssignmentDto,
   UpdateCTLevelTermDayMappingsDto,
   UpdateCTLevelTermRoomMappingsDto,
+  SwapCTDto,
 } from '../../dtos/ct-schedule.dto';
 
 @Controller('ct-schedule')
@@ -66,5 +67,20 @@ export class CTScheduleController {
   updateAssignment(@Param('id') id: string, @Body() dto: UpdateCTAssignmentDto) {
     return this.ctScheduleService.updateAssignment(id, dto);
   }
+
+  /** Dry run — reports the sittings a swap would exchange and any warnings it
+   *  would raise, without writing anything. */
+  @Post('swap-preview/:semesterId')
+  previewSwap(@Param('semesterId') semesterId: string, @Body() dto: SwapCTDto) {
+    return this.ctScheduleService.previewSwap(semesterId, dto);
+  }
+
+  /** Exchanges date, week and rooms between two courses' CTs — the whole series
+   *  (`mode: 'all'`) or one matching CT number (`mode: 'single'`). */
+  @Post('swap/:semesterId')
+  swapCTs(@Param('semesterId') semesterId: string, @Body() dto: SwapCTDto) {
+    return this.ctScheduleService.swapCTs(semesterId, dto);
+  }
+
 }
 
