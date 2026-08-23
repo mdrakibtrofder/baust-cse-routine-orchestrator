@@ -48,7 +48,6 @@ export class LabSectionsService {
         if (match) {
           match.section_ids = item.section_ids;
           match.teacher_ids = item.teacher_ids;
-          match.primary_room_id = item.primary_room_id ?? null;
           results.push(await manager.save(CourseLabSection, match));
         } else {
           const created = manager.create(CourseLabSection, {
@@ -57,7 +56,6 @@ export class LabSectionsService {
             label: item.label,
             section_ids: item.section_ids,
             teacher_ids: item.teacher_ids,
-            primary_room_id: item.primary_room_id ?? null,
           });
           results.push(await manager.save(CourseLabSection, created));
         }
@@ -69,7 +67,6 @@ export class LabSectionsService {
   async update(id: string, dto: UpdateLabSectionDto): Promise<CourseLabSection> {
     const lg = await this.repo.findOne({ where: { id } });
     if (!lg) throw new NotFoundException(`Lab section ${id} not found`);
-    if (dto.primary_room_id !== undefined) lg.primary_room_id = dto.primary_room_id;
     if (dto.teacher_ids !== undefined) lg.teacher_ids = dto.teacher_ids;
     return this.repo.save(lg);
   }

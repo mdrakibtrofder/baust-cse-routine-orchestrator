@@ -15,10 +15,6 @@ export class LabSectionItemDto {
   @IsArray()
   @IsUUID('all', { each: true })
   teacher_ids: string[];
-
-  @IsOptional()
-  @IsUUID()
-  primary_room_id?: string | null;
 }
 
 export class BatchSaveLabSectionsDto {
@@ -34,13 +30,8 @@ export class BatchSaveLabSectionsDto {
   lab_sections: LabSectionItemDto[];
 }
 
-/** Quick single-field edits (e.g. picking a room from Room & Time Mapping) without
- *  re-submitting the whole batch. */
+/** Quick single-field edits without re-submitting the whole batch. */
 export class UpdateLabSectionDto {
-  @IsOptional()
-  @IsUUID()
-  primary_room_id?: string | null;
-
   @IsOptional()
   @IsArray()
   @IsUUID('all', { each: true })

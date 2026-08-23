@@ -66,7 +66,6 @@ interface PlacementTarget {
   totalStudents: number;
   deptType: 'Departmental' | 'Non-Departmental';
   teacherIds: string[];
-  primaryRoomId: string | null;
   label: string;
 }
 
@@ -358,7 +357,6 @@ export class RoutineGeneratorService {
               totalStudents: this.labSectionStudents(l.course, ctx),
               deptType: mappedSections[0]?.departmental_type ?? 'Departmental',
               teacherIds: l.teacher_ids ?? [],
-              primaryRoomId: l.primary_room_id,
               label: `${l.course.code} (Lab Sec ${l.label})`,
             },
             slotsNeeded: slotsToGenerate,
@@ -393,7 +391,6 @@ export class RoutineGeneratorService {
               totalStudents: a.section.total_students,
               deptType: a.section.departmental_type,
               teacherIds: a.teacher_ids ?? [],
-              primaryRoomId: a.primary_room_id,
               label: `${a.course.code} (L${a.section.level} T${a.section.term} Sec ${a.section.name})`,
             },
             slotsNeeded: slotsToGenerate,
@@ -611,15 +608,9 @@ export class RoutineGeneratorService {
             continue;
           }
 
-          // Preferred room first, then rooms matching type/capacity, preferring
-          // rooms whose departmental type matches the section's
-          const candidateRooms: Room[] = [];
-          if (target.primaryRoomId) {
-            const primaryRoom = allowedRooms.find(r => r.id === target.primaryRoomId);
-            if (primaryRoom) candidateRooms.push(primaryRoom);
-          }
-          candidateRooms.push(...allowedRooms.filter(r =>
-            r.id !== target.primaryRoomId &&
+          // Rooms matching type/capacity, preferring rooms whose departmental
+          // type matches the section's
+          const candidateRooms: Room[] = allowedRooms.filter(r =>
             this.roomFits(r, target.courseType, target.totalStudents) &&
             this.roomAllowedForCourse(r, target.courseCode, ctx)
           )
@@ -627,7 +618,7 @@ export class RoutineGeneratorService {
             .sort((a, b) =>
               (a.departmental_type === target.deptType ? 0 : 1) -
               (b.departmental_type === target.deptType ? 0 : 1)
-            ));
+            );
 
           for (const room of candidateRooms) {
             if (await this.hasRoomConflict(ctx, day.name, period, room, tryWeek)) continue;
@@ -943,7 +934,6 @@ export class RoutineGeneratorService {
 
     let totalStudents: number;
     let deptType: 'Departmental' | 'Non-Departmental';
-    let primaryRoomId: string | null;
     let coveredSectionIds: string[];
     let teacherIds: string[];
 
@@ -955,7 +945,6 @@ export class RoutineGeneratorService {
         .filter((s): s is Section => !!s);
       totalStudents = this.labSectionStudents(course, ctx);
       deptType = mappedSections[0]?.departmental_type ?? 'Departmental';
-      primaryRoomId = lab.primary_room_id;
       coveredSectionIds = lab.section_ids;
       teacherIds = lab.teacher_ids;
     } else if (occupant.section_id) {
@@ -963,15 +952,11 @@ export class RoutineGeneratorService {
       if (!cst) return false;
       totalStudents = cst.section.total_students;
       deptType = cst.section.departmental_type;
-      primaryRoomId = cst.primary_room_id;
       coveredSectionIds = [occupant.section_id];
       teacherIds = cst.teacher_ids;
     } else {
       return false;
     }
-
-    // Don't evict a class from its preferred room
-    if (primaryRoomId && primaryRoomId === occupant.room_id) return false;
 
     const candidates = ctx.rooms
       .filter(r =>

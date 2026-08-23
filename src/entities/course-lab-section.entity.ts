@@ -1,7 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Unique, Index } from 'typeorm';
 import { Semester } from './semester.entity';
 import { Course } from './course.entity';
-import { Room } from './room.entity';
 
 @Entity('course_lab_sections')
 @Unique('UQ_course_lab_sections_semester_course_label', ['semester_id', 'course_id', 'label'])
@@ -28,8 +27,6 @@ export class CourseLabSection {
   @Column({ type: 'uuid', array: true, default: () => 'array[]::uuid[]' })
   teacher_ids: string[];
 
-  @Column({ type: 'uuid', nullable: true })
-  primary_room_id: string | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
@@ -45,7 +42,4 @@ export class CourseLabSection {
   @JoinColumn({ name: 'course_id' })
   course: Course;
 
-  @ManyToOne(() => Room, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'primary_room_id' })
-  primary_room: Room | null;
 }

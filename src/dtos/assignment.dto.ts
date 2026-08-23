@@ -22,7 +22,4 @@ export class CreateAssignmentDto {
   @IsArray()
   combined_section_ids?: string[] | null;
 
-  @IsOptional()
-  @IsUUID()
-  primary_room_id?: string | null;
 }
