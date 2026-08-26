@@ -138,12 +138,21 @@ export class ClassSlotsService {
       }
     }
 
-    if (dto.room_id !== undefined) {
-      slot.room = null;
-    }
+    // `room_id` is both a plain column and the join column of the `room` relation,
+    // and on save the relation wins: a stale `room` left over from the load would
+    // write the OLD room id back, and setting `slot.room = null` makes TypeORM copy
+    // that null onto `slot.room_id` after the update — so the row on disk is right
+    // but the entity returned to the client says the class has no room, and the
+    // routine view blanks the room until the next full reload. Dropping the property
+    // entirely leaves the FK column as the only thing describing the room, which
+    // persists correctly *and* comes back correct.
+    delete (slot as { room?: Room | null }).room;
 
     Object.assign(slot, dto);
-    return this.classSlotRepository.save(slot);
+    await this.classSlotRepository.save(slot);
+
+    // Re-read so the response carries the same fully-populated shape as GET.
+    return this.findById(id);
   }
 
   async delete(id: string): Promise<void> {
