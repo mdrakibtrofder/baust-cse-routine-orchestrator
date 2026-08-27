@@ -55,6 +55,14 @@ export class ClassSlotsController {
     );
   }
 
+  @Post('swap')
+  async swap(@Body() body: { slot_a_id: string; slot_b_id: string; force?: boolean }) {
+    if (!body?.slot_a_id || !body?.slot_b_id) {
+      throw new BadRequestException('slot_a_id and slot_b_id are required');
+    }
+    return this.classSlotsService.swapSlots(body.slot_a_id, body.slot_b_id, body.force ?? false);
+  }
+
   @Patch(':id')
   async update(@Param('id') id: string, @Body() dto: UpdateClassSlotDto) {
     return this.classSlotsService.update(id, dto);

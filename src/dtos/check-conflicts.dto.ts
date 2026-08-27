@@ -41,6 +41,11 @@ export class CheckConflictsDto {
   ignoreSlotId?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  ignoreSlotIds?: string[];
+
+  @IsOptional()
   ignoreCourseSectionSlots?: boolean;
 
   @IsOptional()

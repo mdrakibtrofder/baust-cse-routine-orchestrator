@@ -155,6 +155,87 @@ export class ClassSlotsService {
     return this.findById(id);
   }
 
+  /** Teacher roster occupying a slot — lab group first, else the course+section assignment. */
+  private async teacherIdsForSlot(slot: ClassSlot): Promise<string[]> {
+    if (slot.lab_section_id) {
+      const lab = await this.labSectionRepository.findOne({ where: { id: slot.lab_section_id } });
+      return lab?.teacher_ids ?? [];
+    }
+    const cst = await this.cstRepository.findOne({
+      where: {
+        semester_id: slot.semester_id,
+        course_id: slot.course_id,
+        section_id: slot.section_id,
+      },
+    });
+    return cst?.teacher_ids ?? [];
+  }
+
+  /**
+   * Exchange the day/time of two class slots atomically.
+   *
+   * Each class keeps its own course, section, room, teachers and week pattern —
+   * only WHEN it meets is swapped, so two cells of a routine trade places whole.
+   * Both slots are ignored while validating, because they are moving together.
+   * With force=true the swap is written even when conflicts remain.
+   */
+  async swapSlots(slotAId: string, slotBId: string, force = false): Promise<{ slots: ClassSlot[]; conflicts: Conflict[] }> {
+    if (slotAId === slotBId) {
+      throw new BadRequestException('Cannot swap a class with itself');
+    }
+    const a = await this.findById(slotAId);
+    const b = await this.findById(slotBId);
+    if (a.semester_id !== b.semester_id) {
+      throw new BadRequestException('Both classes must belong to the same semester');
+    }
+
+    const [teachersA, teachersB] = await Promise.all([
+      this.teacherIdsForSlot(a),
+      this.teacherIdsForSlot(b),
+    ]);
+
+    const dtoFor = (slot: ClassSlot, target: ClassSlot, teacherIds: string[]): CheckConflictsDto => ({
+      semester_id: slot.semester_id,
+      course_id: slot.course_id,
+      section_id: slot.section_id,
+      lab_section_id: slot.lab_section_id,
+      day: target.day,
+      start: target.start,
+      end: target.end,
+      room_id: slot.room_id,
+      week: slot.week as 'EVERY' | 'EVEN' | 'ODD',
+      teacher_ids: teacherIds,
+      ignoreSlotIds: [a.id, b.id],
+      ignoreCourseSectionSlots: true,
+    });
+
+    const conflicts: Conflict[] = [
+      ...(await this.checkConflicts(dtoFor(a, b, teachersA))),
+      ...(await this.checkConflicts(dtoFor(b, a, teachersB))),
+    ];
+
+    if (conflicts.length > 0 && !force) {
+      throw new ConflictException({ message: 'Conflicts detected', conflicts });
+    }
+
+    const aTime = { day: a.day, start: a.start, end: a.end };
+    const bTime = { day: b.day, start: b.start, end: b.end };
+
+    await this.dataSource.transaction(async (manager) => {
+      // `room` is the relation behind `room_id`; a stale copy would write the old
+      // room back on save (same reason as in `update`).
+      delete (a as { room?: Room | null }).room;
+      delete (b as { room?: Room | null }).room;
+      Object.assign(a, bTime);
+      Object.assign(b, aTime);
+      await manager.save(ClassSlot, a);
+      await manager.save(ClassSlot, b);
+    });
+
+    const slots = await Promise.all([this.findById(a.id), this.findById(b.id)]);
+    return { slots, conflicts };
+  }
+
   async delete(id: string): Promise<void> {
     const slot = await this.findById(id);
     await this.classSlotRepository.remove(slot);
@@ -373,6 +454,7 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreSlotIds?.includes(slot.id)) continue;
       // Only skip slots from the exact same lab section, not other lab sections of same course
       const shouldIgnore = 
         (dto.ignoreCourseSectionSlots && 
@@ -413,6 +495,7 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreSlotIds?.includes(slot.id)) continue;
       // Only skip if it's exactly the same lab section (not other lab sections of same course)
       if (dto.ignoreCourseSectionSlots && 
           slot.course_id === dto.course_id && 
@@ -506,6 +589,7 @@ export class ClassSlotsService {
 
     for (const slot of allSlots) {
       if (slot.id === dto.ignoreSlotId) continue;
+      if (dto.ignoreSlotIds?.includes(slot.id)) continue;
       // Only skip if it's exactly the same lab section/section
       const shouldIgnore = 
         (dto.ignoreCourseSectionSlots && 
