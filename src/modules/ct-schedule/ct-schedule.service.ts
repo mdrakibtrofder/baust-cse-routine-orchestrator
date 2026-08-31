@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { CTSetting } from '../../entities/ct-setting.entity';
 import { CTWeekConfig } from '../../entities/ct-week-config.entity';
 import { CTAssignment } from '../../entities/ct-assignment.entity';
@@ -68,6 +68,13 @@ export class CTScheduleService {
     settings.total_weeks = dto.total_weeks;
     if (dto.start_date) {
       settings.start_date = CTScheduleService.dateOnly(dto.start_date) as unknown as Date;
+    }
+    if (dto.break_weeks) {
+      // Normalised on the way in so the calendar maths downstream can assume a
+      // sorted, duplicate-free list of in-range week numbers.
+      settings.break_weeks = Array.from(new Set(dto.break_weeks))
+        .filter((w) => Number.isInteger(w) && w >= 1 && w <= settings.total_weeks)
+        .sort((a, b) => a - b);
     }
     return this.ctSettingRepository.save(settings);
   }
@@ -186,9 +193,45 @@ export class CTScheduleService {
         }),
       );
       if (rows.length > 0) await manager.save(rows);
+      await this.realignAssignmentsToCalendar(manager, semesterId, Array.from(byKey.values()));
     });
 
     return this.getWeekConfigs(semesterId);
+  }
+
+  /** Moves existing class tests onto the dates the new calendar gives them.
+   *
+   *  Inserting a break week (or changing the start date) slides the dates behind
+   *  a week number without changing the week number itself, so every assignment
+   *  already stored is left pointing at a date the calendar no longer contains.
+   *  Each sitting is re-anchored to the date carrying the same `week_number` and
+   *  the same weekday it was scheduled on — its week number, rooms, ct number and
+   *  weekday all survive untouched, which is exactly what the week / course /
+   *  teacher / room views render.
+   *
+   *  A sitting whose (week number, weekday) has no counterpart in the new
+   *  calendar is left alone rather than guessed at; the CT views keep showing it
+   *  where it was, and re-generating or editing it by hand fixes it. */
+  private async realignAssignmentsToCalendar(
+    manager: EntityManager,
+    semesterId: string,
+    configs: { week_number: number; date: string }[],
+  ) {
+    const byWeekAndWeekday = new Map<string, string>();
+    for (const c of configs) {
+      byWeekAndWeekday.set(`${c.week_number}|${this.weekdayCode(c.date)}`, c.date);
+    }
+
+    const assignments = await manager.find(CTAssignment, { where: { semester_id: semesterId } });
+    const moved: CTAssignment[] = [];
+    for (const a of assignments) {
+      const current = CTScheduleService.dateOnly(a.date);
+      const next = byWeekAndWeekday.get(`${a.week_number}|${this.weekdayCode(current)}`);
+      if (!next || next === current) continue;
+      a.date = next as unknown as Date;
+      moved.push(a);
+    }
+    if (moved.length > 0) await manager.save(moved);
   }
 
   async getAssignments(semesterId: string) {

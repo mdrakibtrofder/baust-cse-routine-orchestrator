@@ -10,6 +10,13 @@ export class UpdateCTSettingDto {
   @IsOptional()
   @IsDateString()
   start_date?: string;
+
+  /** Week numbers a break week sits before; see `CTSetting.break_weeks`. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  break_weeks?: number[];
 }
 
 export class CTWeekDayConfigDto {

@@ -16,6 +16,16 @@ export class CTSetting {
   @Column({ type: 'date', nullable: true })
   start_date: Date | null;
 
+  /** Week numbers that a break week (e.g. mid term) sits *before*.
+   *
+   *  A calendar week is taken out of teaching without renumbering anything: an
+   *  entry `8` means the calendar week that would have carried week 8 is the
+   *  break, and weeks 8, 9, 10 … each fall one calendar week later than their
+   *  position implies. Week numbers, and therefore every stored assignment's
+   *  `week_number`, are untouched — only the dates behind them move. */
+  @Column({ type: 'integer', array: true, default: () => "'{}'" })
+  break_weeks: number[];
+
   @CreateDateColumn({ type: "timestamptz" })
   created_at: Date;
 
