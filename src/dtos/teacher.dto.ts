@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, Min, Max, Matches } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min, Max, Matches, IsEmail, MaxLength, ValidateIf } from 'class-validator';
 
 export class CreateTeacherDto {
   @IsString()
@@ -17,6 +17,19 @@ export class CreateTeacherDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  /** Contact details. Empty string is allowed, so the address is only validated
+   *  when something was actually typed. */
+  @IsOptional()
+  @IsString()
+  @ValidateIf((_, value) => typeof value === 'string' && value.trim() !== '')
+  @IsEmail({}, { message: 'Email must be a valid email address' })
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  phone?: string;
 
   @IsOptional()
   @IsNumber()
