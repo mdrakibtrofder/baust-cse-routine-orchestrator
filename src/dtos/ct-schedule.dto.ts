@@ -1,5 +1,18 @@
-import { IsInt, IsUUID, IsOptional, IsDateString, Min, Max, IsBoolean, IsArray, ValidateNested, IsString, IsIn, ArrayNotEmpty } from 'class-validator';
+import { IsInt, IsUUID, IsOptional, IsDateString, Min, Max, IsBoolean, IsArray, ValidateNested, IsString, IsIn, ArrayNotEmpty, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class CTBreakDto {
+  /** The week number this break sits immediately before. */
+  @IsInt()
+  @Min(1)
+  before_week: number;
+
+  /** Falls back to a generic label server-side when blank. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  name?: string;
+}
 
 export class UpdateCTSettingDto {
   @IsInt()
@@ -11,12 +24,12 @@ export class UpdateCTSettingDto {
   @IsDateString()
   start_date?: string;
 
-  /** Week numbers a break week sits before; see `CTSetting.break_weeks`. */
+  /** Named break weeks; see `CTSetting.breaks`. */
   @IsOptional()
   @IsArray()
-  @IsInt({ each: true })
-  @Min(1, { each: true })
-  break_weeks?: number[];
+  @ValidateNested({ each: true })
+  @Type(() => CTBreakDto)
+  breaks?: CTBreakDto[];
 }
 
 export class CTWeekDayConfigDto {

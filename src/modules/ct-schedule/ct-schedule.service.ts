@@ -60,6 +60,9 @@ export class CTScheduleService {
     return settings;
   }
 
+  /** Label a break falls back to when saved without one. */
+  private static readonly DEFAULT_BREAK_NAME = 'Break Week';
+
   async updateSettings(semesterId: string, dto: UpdateCTSettingDto) {
     if (!semesterId || semesterId === 'undefined') {
       throw new ConflictException('Invalid semester ID');
@@ -69,12 +72,17 @@ export class CTScheduleService {
     if (dto.start_date) {
       settings.start_date = CTScheduleService.dateOnly(dto.start_date) as unknown as Date;
     }
-    if (dto.break_weeks) {
-      // Normalised on the way in so the calendar maths downstream can assume a
-      // sorted, duplicate-free list of in-range week numbers.
-      settings.break_weeks = Array.from(new Set(dto.break_weeks))
-        .filter((w) => Number.isInteger(w) && w >= 1 && w <= settings.total_weeks)
-        .sort((a, b) => a - b);
+    if (dto.breaks) {
+      // Normalised on the way in so the calendar maths downstream can assume
+      // in-range week numbers in calendar order. Duplicates are deliberately
+      // kept: two breaks before the same week are two consecutive break weeks.
+      settings.breaks = dto.breaks
+        .filter((b) => Number.isInteger(b.before_week) && b.before_week >= 1 && b.before_week <= settings.total_weeks)
+        .map((b) => ({
+          before_week: b.before_week,
+          name: (b.name ?? '').trim() || CTScheduleService.DEFAULT_BREAK_NAME,
+        }))
+        .sort((a, b) => a.before_week - b.before_week);
     }
     return this.ctSettingRepository.save(settings);
   }
