@@ -17,6 +17,7 @@ import {
   UpdateCTLevelTermRoomMappingsDto,
   SwapCTDto,
 } from '../../dtos/ct-schedule.dto';
+import { CTRescheduleService } from './ct-reschedule.service';
 
 /** Minimum number of weeks between consecutive class tests of the same course.
  *  Keep in sync with `CT_MIN_WEEK_GAP` in shared/constants.ts and the frontend copy
@@ -43,6 +44,7 @@ export class CTScheduleService {
     private readonly roomRepository: Repository<Room>,
     @InjectRepository(Course)
     private readonly courseRepository: Repository<Course>,
+    private readonly ctRescheduleService: CTRescheduleService,
   ) {}
 
   async getSettings(semesterId: string) {
@@ -92,7 +94,7 @@ export class CTScheduleService {
    *  a Date using the *server's local* calendar fields, so a UTC-midnight Date is
    *  stored one day earlier on any server west of UTC. Keeping dates as strings
    *  end-to-end makes the stored day identical to the day the user picked. */
-  private static dateOnly(v: string | Date): string {
+  static dateOnly(v: string | Date): string {
     if (v instanceof Date) {
       return `${v.getUTCFullYear()}-${String(v.getUTCMonth() + 1).padStart(2, '0')}-${String(v.getUTCDate()).padStart(2, '0')}`;
     }
@@ -296,6 +298,10 @@ export class CTScheduleService {
 
     // 1. Clear existing assignments
     await this.ctAssignmentRepository.delete({ semester_id: semesterId });
+
+    // The Reschedule CT snapshot describes the schedule being replaced here, so
+    // it goes with it — restoring into a fresh schedule would only conflict.
+    await this.ctRescheduleService.clearSnapshot(semesterId);
 
     // 2. Determine theory courses actually offered this semester
     const csts = await this.cstRepository.find({

@@ -2,14 +2,18 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CTScheduleService } from './ct-schedule.service';
 import { CTScheduleController } from './ct-schedule.controller';
+import { CTRescheduleService } from './ct-reschedule.service';
+import { CTRescheduleController } from './ct-reschedule.controller';
 import { CTSetting } from '../../entities/ct-setting.entity';
 import { CTWeekConfig } from '../../entities/ct-week-config.entity';
 import { CTAssignment } from '../../entities/ct-assignment.entity';
 import { CTLevelTermDayMapping } from '../../entities/ct-level-term-day-mapping.entity';
 import { CTLevelTermRoomMapping } from '../../entities/ct-level-term-room-mapping.entity';
+import { CTRescheduleSnapshot } from '../../entities/ct-reschedule-snapshot.entity';
 import { CourseSectionTeacher } from '../../entities/course-section-teacher.entity';
 import { Room } from '../../entities/room.entity';
 import { Course } from '../../entities/course.entity';
+import { Department } from '../../entities/department.entity';
 
 @Module({
   imports: [
@@ -19,13 +23,15 @@ import { Course } from '../../entities/course.entity';
       CTAssignment,
       CTLevelTermDayMapping,
       CTLevelTermRoomMapping,
+      CTRescheduleSnapshot,
       CourseSectionTeacher,
       Room,
       Course,
+      Department,
     ]),
   ],
-  controllers: [CTScheduleController],
-  providers: [CTScheduleService],
-  exports: [CTScheduleService],
+  controllers: [CTScheduleController, CTRescheduleController],
+  providers: [CTScheduleService, CTRescheduleService],
+  exports: [CTScheduleService, CTRescheduleService],
 })
 export class CTScheduleModule {}
