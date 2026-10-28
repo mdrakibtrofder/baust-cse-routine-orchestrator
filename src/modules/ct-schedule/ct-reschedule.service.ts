@@ -20,6 +20,21 @@ const RESCHEDULE_FROM_WEEK = 10;
 const RESCHEDULE_FIRST_WEEK = 11;
 const RESCHEDULE_LAST_WEEK = 14;
 
+/** Minimum number of week numbers between two consecutive class tests of the
+ *  *same course* once they are re-placed. Keep in sync with
+ *  `CT_RESCHEDULE_WEEK_GAP` in shared/constants.ts and the frontend copy in
+ *  src/lib/constants.ts. A gap of 2 means a course's CT in week 11 pushes its
+ *  next CT to week 13 at the earliest. */
+const RESCHEDULE_MIN_WEEK_GAP = 2;
+
+/** Weekday a level-term's overflow class test uses. A level-term sits its class
+ *  tests as one cohort, so it never sits two on a day; when it has more class
+ *  tests than its own days can hold, the rest take this weekday of the weeks
+ *  that do *not* already use it — for a group whose own days include Thursday
+ *  those are the other weeks, so the level-term simply sits twice that week.
+ *  Keep in sync with `CT_RESCHEDULE_EXTRA_DAY` in shared/constants.ts. */
+const EXTRA_DAY_CODE = 'THU';
+
 type RescheduleGroup = 1 | 2;
 
 /** The department's level-terms split into the two sitting groups.
@@ -44,25 +59,6 @@ function daysForGroup(group: RescheduleGroup, week: number): string[] {
   return oddWeek ? ['SUN', 'TUE', 'THU'] : ['MON', 'WED'];
 }
 
-/** `count` of `slots`, chosen as evenly across the list as their number allows.
- *  Used to drop a level-term's overflow class tests into the weeks its own days
- *  run out on, rather than piling them all onto the first free dates. */
-function pickSpread<T>(slots: T[], count: number): T[] {
-  if (count <= 0) return [];
-  if (count >= slots.length) return [...slots];
-  const picked: T[] = [];
-  for (let i = 1; i <= count && picked.length < count; i++) {
-    const index = Math.min(Math.max(Math.round((i * slots.length) / (count + 1)) - 1, 0), slots.length - 1);
-    if (!picked.includes(slots[index])) picked.push(slots[index]);
-  }
-  // Rounding can land twice on the same slot; top the rest up in order.
-  for (const slot of slots) {
-    if (picked.length >= count) break;
-    if (!picked.includes(slot)) picked.push(slot);
-  }
-  return picked;
-}
-
 /** One sitting's before/after, as the page renders it. */
 export interface RescheduleShift {
   id: string;
@@ -79,6 +75,9 @@ export interface RescheduleShift {
   new_date: string;
   new_week: number;
   status: 'moved' | 'unchanged' | 'unplaced';
+  /** True when the sitting could not fit on its group's own days and takes the
+   *  level-term's extra day instead (the overflow list the page shows). */
+  extra: boolean;
   /** Why a sitting could not be placed, when `status` is `unplaced`. */
   note?: string;
 }
@@ -314,11 +313,13 @@ export class CTRescheduleService {
    *  - the level-term's group decides which weekdays each week offers;
    *  - one sitting per date, because a level-term sits its class tests as one
    *    cohort — its date has to be unique however the rooms overlap;
-   *  - each course's class tests are spread evenly across the dates the window
-   *    offers it, in CT order, with no fixed gap;
+   *  - a course's consecutive class tests sit at least `RESCHEDULE_MIN_WEEK_GAP`
+   *    week numbers apart, so a sitting follows the one before it of the same
+   *    course by two weeks or more;
    *  - when a level-term has more class tests than its own days can hold, the
-   *    rest of the window's available dates take the overflow rather than leave
-   *    a sitting outside weeks 11–14.
+   *    rest take the group's extra day — the Thursday of the weeks that do not
+   *    already sit on Thursday — rather than a date outside the window or a
+   *    second class test on a day the level-term is already sitting.
    */
   private async buildPlan(semesterId: string) {
     const [settings, departments, configs, roomMappings, assignments, snapshot] = await Promise.all([
@@ -444,7 +445,18 @@ export class CTRescheduleService {
 
     const shifts: RescheduleShift[] = [];
 
-    const record = (row: BaseSitting, still: { date: string; week: number } | null, note?: string) => {
+    // Every class test of a course, movable or not, so a re-placed sitting can
+    // measure its two-week gap against the sitting before it of the same course
+    // even when that one stays put.
+    const baseByCourseCt = new Map<string, BaseSitting>();
+    for (const row of base) baseByCourseCt.set(`${row.course_id}|${row.ct_number}`, row);
+
+    const record = (
+      row: BaseSitting,
+      still: { date: string; week: number } | null,
+      extra: boolean,
+      note?: string,
+    ) => {
       const group = groupForLevelTerm(row.course.level, row.course.term)!;
       const unchanged = still !== null && still.date === row.date && still.week === row.week_number;
       shifts.push({
@@ -462,6 +474,7 @@ export class CTRescheduleService {
         new_date: still?.date ?? row.date,
         new_week: still?.week ?? row.week_number,
         status: still === null ? 'unplaced' : unchanged ? 'unchanged' : 'moved',
+        extra,
         note,
       });
     };
@@ -485,35 +498,34 @@ export class CTRescheduleService {
     for (const bucket of orderedBuckets) {
       const sample = bucket.rows[0].course;
       const label = `Level ${sample.level}-${sample.term}`;
-      const groupSlots = slotsByGroup.get(bucket.group) ?? [];
       const roomIds = roomsFor(sample, bucket.rows[0].room_ids);
       const blocked = blockedByLevelTerm.get(`${sample.level}|${sample.term}`) ?? new Set<string>();
-      const groupDates = new Set(groupSlots.map((s) => s.date));
 
-      // The level-term's own days — its group's weekdays, week by week. Only when
-      // they cannot hold every class test do other available dates join in, picked
-      // to sit as evenly between the level-term's own days as their number allows,
-      // so a test outside weeks 11–14 is never the answer and the gaps stay wide.
-      const ownPool = groupSlots.length > 0 ? groupSlots : windowSlots;
-      const ownDates = new Set(ownPool.map((s) => s.date));
-      const otherSlots =
-        groupSlots.length > 0 ? windowSlots.filter((s) => !ownDates.has(s.date)) : [];
-      // Overflow dates that no level-term sharing these rooms has taken yet come
-      // first, so an overrun lands where it cannot clash whenever such a date
-      // exists at all.
-      const spareSlots = otherSlots.filter((s) => {
-        const taken = bookedByDate.get(s.date);
-        return !(taken && roomIds.some((rid) => taken.has(rid)));
-      });
-      const overflow = bucket.rows.length - ownPool.length;
-      const extras = pickSpread(spareSlots.length >= overflow ? spareSlots : otherSlots, overflow);
-      const pool = [...ownPool, ...extras].sort((a, b) => a.date.localeCompare(b.date));
-      const capacity = pool.length;
+      // The level-term's own days — its group's weekdays, week by week, minus the
+      // dates one of its unmoved sittings already holds.
+      const groupDates = new Set((slotsByGroup.get(bucket.group) ?? []).map((s) => s.date));
+      const ownPool = (slotsByGroup.get(bucket.group) ?? [])
+        .filter((s) => !blocked.has(s.date))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // Its extra day: the Thursdays of the weeks the group does not already sit
+      // on Thursday, which is where a level-term's overflow goes. For group 2 that
+      // is the even weeks it sits Mon/Wed; for group 1 the odd ones.
+      const extraPool = windowSlots
+        .filter(
+          (s) =>
+            CTRescheduleService.weekdayCode(s.date) === EXTRA_DAY_CODE &&
+            !groupDates.has(s.date) &&
+            !blocked.has(s.date),
+        )
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      const capacity = ownPool.length + extraPool.length;
 
       if (capacity === 0) {
         const note = `${label}: no available date in weeks ${RESCHEDULE_FIRST_WEEK}–${maxWeek}`;
         warnings.push(note);
-        for (const row of bucket.rows) record(row, null, note);
+        for (const row of bucket.rows) record(row, null, false, note);
         continue;
       }
 
@@ -528,12 +540,10 @@ export class CTRescheduleService {
       // Dates this level-term has taken. A date is used once per level-term, so
       // two of its courses can never sit at the same time.
       const usedDates = new Set<string>();
-      const spilled = new Set<string>();
 
-      /** Whether the level-term can take this date: free for the level-term, not
-       *  already held by one of its unmoved sittings, and — unless `sharingRooms`
-       *  says the window leaves no choice — not needed by a level-term that uses
-       *  the same rooms. */
+      /** Whether the level-term can take this date: free for it, and — unless
+       *  `sharingRooms` says the window leaves no choice — not needed by a
+       *  level-term that uses the same rooms. */
       const isFree = (slot: { date: string; week: number }, sharingRooms: boolean) => {
         if (usedDates.has(slot.date) || blocked.has(slot.date)) return false;
         if (sharingRooms) return true;
@@ -541,18 +551,22 @@ export class CTRescheduleService {
         return !(taken && roomIds.some((rid) => taken.has(rid)));
       };
 
-      /** The free date nearest index `ideal`, searching outward so the spread is
-       *  kept and the whole list is swept before giving up. With `after` set the
-       *  date also has to come after this course's previous class test. */
-      const nearest = (ideal: number, after: string, sharingRooms: boolean) => {
-        for (let offset = 0; offset < pool.length; offset++) {
-          for (const index of [ideal + offset, ideal - offset]) {
-            if (index < 0 || index >= pool.length) continue;
-            const slot = pool[index];
-            if (after && slot.date <= after) continue;
-            if (!isFree(slot, sharingRooms)) continue;
-            return slot;
-          }
+      /** The earliest date in `pool` after `after` that keeps the course's
+       *  `RESCHEDULE_MIN_WEEK_GAP` (unless `requireGap` is given up as a last
+       *  resort) and is free. The pool is date-ordered, so the first hit is the
+       *  earliest. */
+      const attempt = (
+        pool: { date: string; week: number }[],
+        after: string,
+        afterWeek: number,
+        requireGap: boolean,
+        sharingRooms: boolean,
+      ) => {
+        for (const slot of pool) {
+          if (slot.date <= after) continue;
+          if (requireGap && slot.week < afterWeek + RESCHEDULE_MIN_WEEK_GAP) continue;
+          if (!isFree(slot, sharingRooms)) continue;
+          return slot;
         }
         return null;
       };
@@ -572,34 +586,24 @@ export class CTRescheduleService {
       for (const entry of courses) entry.rows.sort((a, b) => a.ct_number - b.ct_number);
 
       for (const { course, rows } of courses) {
-        // Where each of this course's class tests would ideally go: spread evenly
-        // across the dates the level-term's window offers, so the gaps come out as
-        // large and as varied as the number of dates allows. No fixed gap is
-        // enforced — fitting every class test inside weeks 11–14 comes first, and
-        // a rigid two-week step would push a third test past week 14 entirely.
-        const span = pool.length;
-        const packed = rows.length >= span;
-        const ideals: number[] = [];
-        for (let k = 0; k < rows.length; k++) {
-          let ideal = packed
-            ? Math.min(k, span - 1)
-            : Math.round(((k + 1) * span) / (rows.length + 1));
-          if (k > 0) ideal = Math.max(ideal, ideals[k - 1] + 1);
-          ideals.push(Math.min(ideal, span - 1));
-        }
+        // The sitting before this course's first movable one — its own earlier
+        // class test, which the gap is measured from even though it stays put.
+        const before = baseByCourseCt.get(`${course.id}|${rows[0].ct_number - 1}`);
+        let after = before?.date ?? '';
+        let afterWeek = before?.week_number ?? 0;
 
-        let after = '';
-        for (let k = 0; k < rows.length; k++) {
-          const row = rows[k];
-
-          // A date no other level-term needs comes first; only when the window has
-          // nothing clash-free left does a shared room get accepted. The time
-          // order is given up only as a last resort, when no later date is free.
+        for (const row of rows) {
+          // Each course's own days come first; only once the level-term's own days
+          // are gone does an extra day take the sitting.
           const slot =
-            nearest(ideals[k], after, false) ??
-            nearest(ideals[k], after, true) ??
-            nearest(ideals[k], '', false) ??
-            nearest(ideals[k], '', true);
+            attempt(ownPool, after, afterWeek, true, false) ??
+            attempt(ownPool, after, afterWeek, true, true) ??
+            attempt(ownPool, after, afterWeek, false, false) ??
+            attempt(ownPool, after, afterWeek, false, true) ??
+            attempt(extraPool, after, afterWeek, true, false) ??
+            attempt(extraPool, after, afterWeek, true, true) ??
+            attempt(extraPool, after, afterWeek, false, false) ??
+            attempt(extraPool, after, afterWeek, false, true);
 
           if (!slot) {
             // Nothing left at all. Hold this sitting's own date so no other course
@@ -608,6 +612,7 @@ export class CTRescheduleService {
             record(
               row,
               null,
+              false,
               `${label}: ${course.code} CT${row.ct_number} has no free date left in weeks ` +
                 `${RESCHEDULE_FIRST_WEEK}–${maxWeek}`,
             );
@@ -617,17 +622,11 @@ export class CTRescheduleService {
           usedDates.add(slot.date);
           book(slot.date, roomIds);
           after = slot.date;
-          if (!groupDates.has(slot.date)) spilled.add(slot.date);
-          record(row, slot);
+          afterWeek = slot.week;
+          // A sitting off its group's own days is an Extra CT — the overflow the
+          // page lists separately.
+          record(row, slot, !groupDates.has(slot.date));
         }
-      }
-
-      if (spilled.size > 0) {
-        warnings.push(
-          `${label}: more class tests than its group days can hold, so ` +
-            `${spilled.size} of them use other available dates inside weeks ` +
-            `${RESCHEDULE_FIRST_WEEK}–${maxWeek}.`,
-        );
       }
     }
 
@@ -640,10 +639,19 @@ export class CTRescheduleService {
         a.ct_number - b.ct_number,
     );
 
-    const weekSlots: { week: number; group: RescheduleGroup; days: string[] }[] = [];
+    // The sitting grid, plus each group's extra day where the window offers one:
+    // the Thursday of the weeks the group does not already sit on Thursday, which
+    // is where its overflow goes.
+    const extraDayByWeek = new Set(
+      windowSlots.filter((s) => CTRescheduleService.weekdayCode(s.date) === EXTRA_DAY_CODE).map((s) => s.week),
+    );
+    const weekSlots: { week: number; group: RescheduleGroup; days: string[]; extra_days: string[] }[] = [];
     for (let week = RESCHEDULE_FIRST_WEEK; week <= maxWeek; week++) {
       for (const group of [1, 2] as RescheduleGroup[]) {
-        weekSlots.push({ week, group, days: daysForGroup(group, week) });
+        const days = daysForGroup(group, week);
+        const extraDays =
+          extraDayByWeek.has(week) && !days.includes(EXTRA_DAY_CODE) ? [EXTRA_DAY_CODE] : [];
+        weekSlots.push({ week, group, days, extra_days: extraDays });
       }
     }
 
